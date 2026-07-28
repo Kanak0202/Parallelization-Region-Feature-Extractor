@@ -1,0 +1,39 @@
+#include "ASTVisitor.h"
+
+#include <iostream>
+
+#include <clang/AST/ASTContext.h>
+#include <clang/AST/Decl.h>
+#include <clang/AST/Stmt.h>
+#include <clang/Basic/SourceManager.h>
+
+ASTVisitor::ASTVisitor(clang::ASTContext *Context)
+    : Context(Context)
+{
+}
+
+bool ASTVisitor::VisitFunctionDecl(clang::FunctionDecl *FD)
+{
+    if (FD->hasBody())
+    {
+        std::cout << "Function: "
+                  << FD->getNameAsString()
+                  << std::endl;
+    }
+
+    return true;
+}
+
+bool ASTVisitor::VisitForStmt(clang::ForStmt *FS)
+{
+    auto &SM = Context->getSourceManager();
+
+    LoopInfo info;
+
+    info.lineNumber = SM.getSpellingLineNumber(FS->getForLoc());
+    info.columnNumber = SM.getSpellingVulumnNumber(FS->getForLoc());
+
+    info.print();
+
+    return true;
+}
