@@ -38,6 +38,8 @@ struct FeatureVector
     int functionCalls = 0;
 
     int arraysAccessed = 0;
+
+    int branchCount = 0;
 };
 
 #endif

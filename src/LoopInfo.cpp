@@ -48,4 +48,5 @@ std::cout << "Stores            : " << features.stores << std::endl;
 std::cout << "Bytes Read        : " << features.bytesRead << std::endl;
 std::cout << "Bytes Written     : " << features.bytesWritten << std::endl;
 std::cout << "Stride Class      : " << features.strideClass << std::endl;
+std::cout << "Branch Count      : " << features.branchCount << std::endl;
 }

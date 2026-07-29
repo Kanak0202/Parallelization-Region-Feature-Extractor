@@ -109,11 +109,35 @@ void collectInductionVarInstrs(
             {
                 if (auto *CmpI = llvm::dyn_cast<llvm::ICmpInst>(User))
                 {
-                    excluded.insert(CmpI);
+                    // The loop latch comparison is excluded separately using
+                    // Loop::getLoopLatch(). Leave other comparisons alone.
                     for (unsigned opI = 0; opI < CmpI->getNumOperands(); ++opI)
                         if (auto *BoundInst = llvm::dyn_cast<llvm::Instruction>(CmpI->getOperand(opI)))
                             if (BoundInst->hasOneUse())
                                 excluded.insert(BoundInst);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Exclude the canonical loop-latch comparison.
+        //
+        // LLVM may compare either the current IV or the incremented IV depending
+        // on the optimization and loop form (i++, i+=2, i--, etc.). Rather than
+        // relying on the comparison being a user of the increment instruction,
+        // explicitly exclude the latch branch condition.
+        // ---------------------------------------------------------------------
+        if (auto *Latch = L->getLoopLatch())
+        {
+            if (auto *Br = llvm::dyn_cast<llvm::BranchInst>(Latch->getTerminator()))
+            {
+                if (Br->isConditional())
+                {
+                    if (auto *Cond =
+                            llvm::dyn_cast<llvm::Instruction>(Br->getCondition()))
+                    {
+                        excluded.insert(Cond);
+                    }
                 }
             }
         }
@@ -193,9 +217,35 @@ void extractIRFeatures(llvm::Function &F,
     const llvm::DataLayout &DL = F.getParent()->getDataLayout();
 
     llvm::SmallPtrSet<llvm::Instruction*, 16> excludedFromArith;
+    llvm::SmallPtrSet<llvm::BranchInst*, 16> excludedLoopBranches;
+
     for (llvm::Loop *L : LI)
+    {
         for (llvm::Loop *SubL : llvm::depth_first(L))
-            collectInductionVarInstrs(SubL, SE, excludedFromArith);
+        {
+            auto *Latch = SubL->getLoopLatch();
+            if (!Latch)
+                continue;
+            
+            auto *Br = llvm::dyn_cast<llvm::BranchInst>(Latch->getTerminator());
+            if (!Br || !Br->isConditional())
+                continue;
+            
+            bool HasInsideSuccessor = false;
+            bool HasOutsideSuccessor = false;
+    
+            for (unsigned i = 0; i < Br->getNumSuccessors(); ++i)
+            {
+                if (SubL->contains(Br->getSuccessor(i)))
+                    HasInsideSuccessor = true;
+                else
+                    HasOutsideSuccessor = true;
+            }
+    
+            if (HasInsideSuccessor && HasOutsideSuccessor)
+                excludedLoopBranches.insert(Br);
+        }
+    }
 
     llvm::SmallPtrSet<llvm::Instruction*, 8> implicitFmaMuls;
     for (auto &BB : F)
@@ -280,6 +330,26 @@ void extractIRFeatures(llvm::Function &F,
                                     classifiedIndirectPtrs, FV);
                     break;
                 }
+                case llvm::Instruction::Br: {
+                    auto *BrI = llvm::cast<llvm::BranchInst>(&I);
+                    if (!BrI->isConditional())
+                        break;
+                    // Loop latch/exit checks are structural loop control,
+                    // not data-dependent branching -- same reasoning as
+                    // excluding IV bookkeeping from arithmetic counts.
+                    // Their condition is one of the ICmps already
+                    // excluded above, so skip those; count everything
+                    // else (if/else, ternaries lowered to branches, etc.)
+                    // as real control-flow divergence within the region.
+                    if (excludedLoopBranches.count(BrI))
+                        break;
+                    
+                    FV.branchCount++;
+                    break;
+                }
+                case llvm::Instruction::Switch:
+                    FV.branchCount++;
+                    break;
             }
 
             if (auto *II = llvm::dyn_cast<llvm::IntrinsicInst>(&I))
