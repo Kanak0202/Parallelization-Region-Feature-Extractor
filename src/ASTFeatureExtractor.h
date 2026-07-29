@@ -44,7 +44,8 @@ private:
 
     static void extractReductionVariables(
         LoopInfo &info,
-        clang::ForStmt *FS);
+        clang::ForStmt *FS,
+        clang::ASTContext *Context);
 
 
 };

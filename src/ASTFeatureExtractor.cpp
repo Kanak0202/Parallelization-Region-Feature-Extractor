@@ -83,7 +83,7 @@ void ASTFeatureExtractor::extractFeatures(
     extractIterationSpace(info, FS, Context);
     extractFunctionCalls(info, FS);
     extractArraysAccessed(info, FS);
-    extractReductionVariables(info, FS);
+    extractReductionVariables(info, FS, Context);
 
 }
 
@@ -162,6 +162,7 @@ void ASTFeatureExtractor::extractArraysAccessed(
 
 class ReductionVisitor: public clang::RecursiveASTVisitor<ReductionVisitor>{
 public:
+    clang::ASTContext *Context = nullptr;
     llvm::SmallPtrSet<const clang::ValueDecl*, 8> reductionVars;
     const clang::VarDecl *innermostInductionVar = nullptr; // set by caller
 
@@ -177,10 +178,21 @@ public:
         clang::Expr *LHS = BO->getLHS()->IgnoreParenImpCasts();
 
         if (auto *LHSRef = llvm::dyn_cast<clang::DeclRefExpr>(LHS)) {
-            if (containsSameDeclRef(BO->getRHS(), LHSRef->getDecl()))
-                classifyScalar(BO->getLHS());
-            return true;
-        }
+
+    // Existing arithmetic reduction detection
+    if (containsSameDeclRef(BO->getRHS(), LHSRef->getDecl())) {
+        classifyScalar(BO->getLHS());
+        return true;
+    }
+
+    // New max/min reduction detection
+    if (isMaxMinReduction(BO, LHSRef->getDecl())) {
+        classifyScalar(BO->getLHS());
+        return true;
+    }
+
+    return true;
+}
 
         if (auto *ASE = llvm::dyn_cast<clang::ArraySubscriptExpr>(LHS)) {
             if (containsSameArrayAccess(BO->getRHS(), ASE))
@@ -235,6 +247,42 @@ private:
         return F.Found;
     }
 
+    bool isMaxMinReduction(clang::BinaryOperator *Assign,
+                           const clang::ValueDecl *ReductionVar)
+    {
+        if (!Context)
+            return false;
+        
+        const clang::Stmt *Current = Assign;
+    
+        while (true)
+        {
+            auto Parents = Context->getParents(*Current);
+    
+            if (Parents.empty())
+                break;
+            
+            if (const auto *If = Parents[0].get<clang::IfStmt>())
+            {
+                auto *Cond = llvm::dyn_cast<clang::BinaryOperator>(
+                    If->getCond()->IgnoreParenImpCasts());
+    
+                if (!Cond || !Cond->isComparisonOp())
+                    return false;
+                
+                return containsSameDeclRef(Cond->getLHS(), ReductionVar) ||
+                       containsSameDeclRef(Cond->getRHS(), ReductionVar);
+            }
+    
+            if (const auto *S = Parents[0].get<clang::Stmt>())
+                Current = S;
+            else
+                break;
+        }
+    
+        return false;
+    }
+
     bool containsSameDeclRef(clang::Expr *E, const clang::ValueDecl *D) {
         struct Finder : clang::RecursiveASTVisitor<Finder> {
             const clang::ValueDecl *Target; bool Found = false;
@@ -269,9 +317,11 @@ private:
 
 void ASTFeatureExtractor::extractReductionVariables(
     LoopInfo &info,
-    clang::ForStmt *FS)
+    clang::ForStmt *FS,
+    clang::ASTContext *Context)
 {
     ReductionVisitor visitor;
+    visitor.Context = Context;
     visitor.innermostInductionVar = getInductionVar(FS); // FS's own induction var, not the innermost nested loop
     visitor.TraverseStmt(FS->getBody());
     info.features.reductions = visitor.reductionVars.size();
