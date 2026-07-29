@@ -180,28 +180,68 @@ bool isSpecialMathIntrinsic(llvm::Intrinsic::ID ID)
 
 } // namespace
 
-// Returns the paired FMul instruction if I is a contract-flagged
-// FAdd/FSub whose operand is a contract-flagged FMul -- i.e. an
-// implicit (not-yet-backend-fused) FMA pair, as opposed to the
-// explicit llvm.fmuladd/llvm.fma intrinsic form.
-llvm::Instruction* getContractedFMulOperand(llvm::Instruction &I)
+// Returns the FMul operand only if this is a true multiply-add pattern:
+//     fadd/fsub (fmul, accumulator)
+// Rejects patterns like:
+//     fadd(fmul, fmul)      // weighted sum
+//     fadd(expr, fmul)      // arbitrary expression
+llvm::Instruction *getContractedFMulOperand(llvm::Instruction &I)
 {
     if (I.getOpcode() != llvm::Instruction::FAdd &&
         I.getOpcode() != llvm::Instruction::FSub)
         return nullptr;
+
     if (!I.getFastMathFlags().allowContract())
         return nullptr;
 
+    llvm::Instruction *Mul = nullptr;
+    llvm::Instruction *Other = nullptr;
+    unsigned MulCount = 0;
+
     for (unsigned i = 0; i < I.getNumOperands(); ++i)
     {
-        if (auto *MulI = llvm::dyn_cast<llvm::Instruction>(I.getOperand(i)))
+        auto *Inst = llvm::dyn_cast<llvm::Instruction>(I.getOperand(i));
+        if (!Inst)
+            continue;
+
+        if (Inst->getOpcode() == llvm::Instruction::FMul &&
+            Inst->getFastMathFlags().allowContract())
         {
-            if (MulI->getOpcode() == llvm::Instruction::FMul &&
-                MulI->getFastMathFlags().allowContract())
-                return MulI;
+            Mul = Inst;
+            ++MulCount;
+        }
+        else
+        {
+            Other = Inst;
         }
     }
-    return nullptr;
+
+    // Need exactly one multiply.
+    if (MulCount != 1)
+        return nullptr;
+
+    // If the other operand is itself arithmetic, don't treat it as an
+    // accumulator. This rejects:
+    //
+    //    fadd (fsub, fmul)
+    //    fadd (fadd, fmul)
+    //    fadd (fmul, fmul)
+    //
+    if (Other)
+    {
+        switch (Other->getOpcode())
+        {
+        case llvm::Instruction::FAdd:
+        case llvm::Instruction::FSub:
+        case llvm::Instruction::FMul:
+        case llvm::Instruction::FDiv:
+            return nullptr;
+        default:
+            break;
+        }
+    }
+
+    return Mul;
 }
 
 void extractIRFeatures(llvm::Function &F,
@@ -281,12 +321,16 @@ void extractIRFeatures(llvm::Function &F,
                     }
                     break;
                 case llvm::Instruction::FAdd:
-                case llvm::Instruction::FSub: {
-                    if (getContractedFMulOperand(I)) {
+                case llvm::Instruction::FSub:
+                {
+                    if (getContractedFMulOperand(I))
+                    {
                         FV.fmaOperations++;
                         FV.floatMultiply++;
                         FV.floatArithmetic++;
-                    } else {
+                    }
+                    else
+                    {
                         FV.floatArithmetic++;
                     }
                     break;
