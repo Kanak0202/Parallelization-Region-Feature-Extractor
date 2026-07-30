@@ -501,11 +501,12 @@ long long ASTFeatureExtractor::computeNestedIterationSpace(
     long long trip = getTripCount(FS, Context);
     if (trip < 0) return -1;
 
-    clang::ForStmt *inner = findDirectlyNestedFor(FS->getBody());
-    if (!inner) return trip;
+    // Sum (not just descend into the first) all sibling for-loops in
+    // FS's body -- e.g. gemm's i-loop contains a sibling j-loop AND a
+    // sibling k-loop (itself nesting a j-loop); both run once per
+    // outer iteration, so their spaces add rather than chain-multiply.
+    long long childSpace = sumNestedIterationSpace(FS->getBody(), Context, getTripCount);
+    if (childSpace < 0) return -1;
 
-    long long innerSpace = computeNestedIterationSpace(inner, Context);
-    if (innerSpace < 0) return -1;
-
-    return trip * innerSpace;
+    return trip * (childSpace > 0 ? childSpace : 1);
 }

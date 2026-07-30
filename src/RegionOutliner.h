@@ -6,6 +6,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Decl.h>
 #include "ProfitabilityRegion.h"
+#include "RegionDetector.h"
 
 class RegionOutliner
 {
@@ -15,7 +16,8 @@ public:
         clang::FunctionDecl *EnclosingFD,
         clang::ASTContext *Context,
         const std::string &outputDir,
-        unsigned regionIndex);
+        unsigned regionIndex,
+        RegionDetector *detector = nullptr);
 };
 
 #endif

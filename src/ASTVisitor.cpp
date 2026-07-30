@@ -35,7 +35,7 @@ bool ASTVisitor::VisitFunctionDecl(clang::FunctionDecl *FD)
                     !SM.isBeforeInTranslationUnit(FD->getEndLoc(), region.getEnd()))
                 {
                     std::string path = RegionOutliner::outlineRegion(
-                        region, FD, Context, outputDir, regionCounter++);
+                        region, FD, Context, outputDir, regionCounter++, regionDetector);
                     if (!path.empty())
                         std::cout << "Outlined region to: " << path << std::endl;
                 }

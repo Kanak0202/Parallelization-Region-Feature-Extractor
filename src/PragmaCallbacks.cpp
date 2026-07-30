@@ -12,3 +12,10 @@ void PragmaCallbacks::PragmaDirective(
 {
     detector.handlePragma(Loc);
 }
+
+void PragmaCallbacks::MacroDefined(
+    const clang::Token &MacroNameTok,
+    const clang::MacroDirective *MD)
+{
+    detector.recordMacro(MacroNameTok.getLocation());
+}

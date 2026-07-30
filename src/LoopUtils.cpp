@@ -24,3 +24,35 @@ clang::VarDecl* getInductionVar(clang::ForStmt *FS)
             return llvm::dyn_cast<clang::VarDecl>(DRE->getDecl());
     return nullptr;
 }
+
+// Trip count of FS itself, multiplied by whatever's nested inside it
+// (1 if FS's body has no further nested for-loop).
+static long long iterationSpaceOfLoop(clang::ForStmt *FS, clang::ASTContext *Context,
+                                       const TripCountFn &getTripCount)
+{
+    long long trip = getTripCount(FS, Context);
+    if (trip < 0) return -1;
+
+    long long childSpace = sumNestedIterationSpace(FS->getBody(), Context, getTripCount);
+    if (childSpace < 0) return -1;
+
+    return trip * (childSpace > 0 ? childSpace : 1);
+}
+
+long long sumNestedIterationSpace(clang::Stmt *Body, clang::ASTContext *Context, const TripCountFn &getTripCount)
+{
+    if (!Body) return 0;
+
+    long long total = 0;
+    for (clang::Stmt *Child : Body->children())
+    {
+        if (!Child) continue;
+        if (auto *FS = llvm::dyn_cast<clang::ForStmt>(Child))
+        {
+            long long sub = iterationSpaceOfLoop(FS, Context, getTripCount);
+            if (sub < 0) return -1;
+            total += sub;
+        }
+    }
+    return total;
+}

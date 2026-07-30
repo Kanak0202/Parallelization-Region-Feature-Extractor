@@ -83,7 +83,8 @@ public:
 };
 
 std::string extractPreamble(clang::SourceManager &SM, clang::FileID FID,
-                             unsigned enclosingFuncLine)
+                             unsigned enclosingFuncLine,
+                             bool suppressDefines = false)
 {
     bool invalid = false;
     llvm::StringRef Buf = SM.getBufferData(FID, &invalid);
@@ -101,13 +102,26 @@ std::string extractPreamble(clang::SourceManager &SM, clang::FileID FID,
         if (p == std::string::npos) continue;
         std::string trimmed = line.substr(p);
 
-        if (trimmed.rfind("#include", 0) == 0 ||
-            trimmed.rfind("#define", 0) == 0)
+        std::string afterHash;
+        if (!trimmed.empty() && trimmed[0] == '#')
+        {
+            size_t d = trimmed.find_first_not_of(" \t", 1);
+            if (d != std::string::npos)
+                afterHash = trimmed.substr(d);
+        }
+
+        bool isInclude = afterHash.rfind("include", 0) == 0;
+        bool isDefine  = afterHash.rfind("define", 0) == 0;
+
+        if (isInclude || (isDefine && !suppressDefines))
         {
             std::cerr << "[PREAMBLE] " << trimmed << "\n";
             preamble += line + "\n";
             continue;
         }
+        if (isDefine)
+            continue; // handled via RegionDetector::getMacroPreamble instead
+
         // std::cerr << "Checking prototype candidate: [" << line << "]\n";
         trimmed = line.substr(p);
 
@@ -244,7 +258,8 @@ std::string RegionOutliner::outlineRegion(
     clang::FunctionDecl *EnclosingFD,
     clang::ASTContext *Context,
     const std::string &outputDir,
-    unsigned regionIndex)
+    unsigned regionIndex,
+    RegionDetector *detector)
 {
     auto &SM = Context->getSourceManager();
     auto &LangOpts = Context->getLangOpts();
@@ -341,7 +356,12 @@ std::string RegionOutliner::outlineRegion(
 
     std::ostringstream out;
     unsigned enclosingFuncLine = SM.getSpellingLineNumber(EnclosingFD->getBeginLoc());
-    out << extractPreamble(SM, FID, enclosingFuncLine) << "\n";
+    std::string macroPreamble = detector
+        ? detector->getMacroPreamble(FID, enclosingFuncLine)
+        : "";
+
+    out << extractPreamble(SM, FID, enclosingFuncLine, detector != nullptr)
+        << macroPreamble << "\n";
     out << returnType << " " << funcName << "(";
     for (size_t i = 0; i < params.size(); ++i)
     {

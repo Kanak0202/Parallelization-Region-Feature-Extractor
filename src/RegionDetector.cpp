@@ -1,6 +1,7 @@
 #include "RegionDetector.h"
 
 #include <iostream>
+#include <sstream>
 
 RegionDetector::RegionDetector(clang::SourceManager &SM)
     : SM(SM),
@@ -69,6 +70,76 @@ void RegionDetector::handlePragma(clang::SourceLocation Loc)
                 << std::endl;
         }
     }
+}
+
+void RegionDetector::recordMacro(clang::SourceLocation Loc)
+{
+    if (Loc.isInvalid())
+        return;
+
+    clang::SourceLocation SpellLoc = SM.getSpellingLoc(Loc);
+    if (SpellLoc.isInvalid())
+        return;
+
+    clang::FileID FID = SM.getFileID(SpellLoc);
+    unsigned startLine = SM.getSpellingLineNumber(SpellLoc);
+
+    bool invalid = false;
+    llvm::StringRef Buf = SM.getBufferData(FID, &invalid);
+    if (invalid)
+        return;
+
+    // A macro's #define can span multiple physical lines via
+    // backslash-continuation (e.g. POLYBENCH_ALLOC_2D_ARRAY). Grabbing
+    // only the first line truncates it mid-continuation, leaving a
+    // dangling trailing '\' that splices onto whatever text follows
+    // it in the generated preamble -- which then swallows the next
+    // macro's leading '#' as a stringize operator. Walk forward and
+    // capture every continuation line too.
+    std::istringstream stream(Buf.str());
+    std::string line, text;
+    unsigned lineNo = 0;
+    bool capturing = false;
+
+    while (std::getline(stream, line))
+    {
+        ++lineNo;
+        if (!capturing)
+        {
+            if (lineNo != startLine)
+                continue;
+            capturing = true;
+        }
+
+        if (!text.empty())
+            text += "\n";
+        text += line;
+
+        std::string trimmed = line;
+        while (!trimmed.empty() && trimmed.back() == '\r')
+            trimmed.pop_back();
+
+        if (trimmed.empty() || trimmed.back() != '\\')
+            break; // no continuation -- definition ends here
+
+        // else: loop continues onto the next physical line
+    }
+
+    if (!capturing)
+        return;
+
+    macros.push_back({text, startLine, FID});
+}
+
+std::string RegionDetector::getMacroPreamble(clang::FileID FID, unsigned beforeLine) const
+{
+    std::string out;
+    for (const auto &m : macros)
+    {
+        if (m.fileID == FID && m.line < beforeLine)
+            out += m.text + "\n";
+    }
+    return out;
 }
 
 std::vector<ProfitabilityRegion>&
