@@ -39,20 +39,46 @@ static long long iterationSpaceOfLoop(clang::ForStmt *FS, clang::ASTContext *Con
     return trip * (childSpace > 0 ? childSpace : 1);
 }
 
-long long sumNestedIterationSpace(clang::Stmt *Body, clang::ASTContext *Context, const TripCountFn &getTripCount)
+long long sumNestedIterationSpace(
+    clang::Stmt *S,
+    clang::ASTContext *Context,
+    const TripCountFn &getTripCount)
 {
-    if (!Body) return 0;
+    if (!S)
+        return 0;
 
     long long total = 0;
-    for (clang::Stmt *Child : Body->children())
+
+    if (auto *FS = llvm::dyn_cast<clang::ForStmt>(S))
     {
-        if (!Child) continue;
-        if (auto *FS = llvm::dyn_cast<clang::ForStmt>(Child))
-        {
-            long long sub = iterationSpaceOfLoop(FS, Context, getTripCount);
-            if (sub < 0) return -1;
-            total += sub;
-        }
+        long long sub = iterationSpaceOfLoop(FS, Context, getTripCount);
+
+        if (sub < 0)
+            return -1;
+
+        total += sub;
+
+        // Don't recurse into this loop because
+        // iterationSpaceOfLoop() already accounts for
+        // all loops nested inside it.
+        return total;
     }
+
+    for (clang::Stmt *Child : S->children())
+    {
+        if (!Child)
+            continue;
+
+        long long sub = sumNestedIterationSpace(
+            Child,
+            Context,
+            getTripCount);
+
+        if (sub < 0)
+            return -1;
+
+        total += sub;
+    }
+
     return total;
 }
