@@ -21,7 +21,7 @@ bool runIRExtraction(ProfitabilityRegion &region, const std::string &resourceDir
 {
     const std::string &srcPath = region.getOutlinedFilePath();
     if (srcPath.empty()) {
-        std::cerr << "  [ir-extract] FAILED: region has no outlined file\n";
+        // std::cerr << "  [ir-extract] FAILED: region has no outlined file\n";
         return false;
     }
 
@@ -33,8 +33,8 @@ bool runIRExtraction(ProfitabilityRegion &region, const std::string &resourceDir
                    
     int rc = std::system(cmd.c_str());
     if (rc != 0) {
-        std::cerr << "  [ir-extract] FAILED: clang compile of " << srcPath
-                   << " returned " << rc << "\n";
+        // std::cerr << "  [ir-extract] FAILED: clang compile of " << srcPath
+                //    << " returned " << rc << "\n";
         return false;
     }
 
@@ -42,16 +42,16 @@ bool runIRExtraction(ProfitabilityRegion &region, const std::string &resourceDir
     llvm::SMDiagnostic Err;
     std::unique_ptr<llvm::Module> M = llvm::parseIRFile(irPath, Err, Context);
     if (!M) {
-        std::cerr << "  [ir-extract] FAILED: could not parse " << irPath
-                   << " -- " << Err.getMessage().str() << "\n";
+        // std::cerr << "  [ir-extract] FAILED: could not parse " << irPath
+                //    << " -- " << Err.getMessage().str() << "\n";
         return false;
     }
 
     llvm::Function *F = M->getFunction(region.getOutlinedFunctionName());
     if (!F) {
-        std::cerr << "  [ir-extract] FAILED: function '"
-                   << region.getOutlinedFunctionName()
-                   << "' not found in " << irPath << "\n";
+        // std::cerr << "  [ir-extract] FAILED: function '"
+                //    << region.getOutlinedFunctionName()
+                //    << "' not found in " << irPath << "\n";
         return false;
     }
 
@@ -67,7 +67,7 @@ bool runIRExtraction(ProfitabilityRegion &region, const std::string &resourceDir
 
     auto &loops = region.getLoops();   // add the & -- this was the whole bug
 if (loops.empty()) {
-    std::cerr << "  [ir-extract] FAILED: region has no recorded loop to merge into\n";
+    // std::cerr << "  [ir-extract] FAILED: region has no recorded loop to merge into\n";
     return false;
 }
 
@@ -75,6 +75,6 @@ if (loops.empty()) {
     // per region carries the authoritative FeatureVector.
     extractIRFeatures(*F, SE, LI, loops[0].features);
 
-    std::cout << "  [ir-extract] OK: merged IR features from " << irPath << "\n";
+    // std::cout << "  [ir-extract] OK: merged IR features from " << irPath << "\n";
     return true;
 }

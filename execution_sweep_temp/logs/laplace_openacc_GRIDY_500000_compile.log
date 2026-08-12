@@ -1,0 +1,42 @@
+main:
+     65, Generating enter data create(T[:][:],T_new[:][:])
+     67, Generating update device(T[:])
+     71, Generating update self(T[:])
+     75, Generating update device(T_new[:])
+     79, Generating update self(T_new[:])
+     93, Generating present(T[:][:],T_new[:][:])
+         Generating NVIDIA GPU code
+         93, #pragma acc loop gang, vector(128) collapse(2) /* blockIdx.x threadIdx.x */
+         94,   /* blockIdx.x threadIdx.x collapsed */
+    107, Generating present(T_new[:][:],T[:][:])
+         Generating NVIDIA GPU code
+        107, #pragma acc loop gang, vector(128) collapse(2) /* blockIdx.x threadIdx.x */
+             Generating reduction(max:dt)
+        108,   /* blockIdx.x threadIdx.x collapsed */
+    107, Generating implicit copy(dt) [if not already present]
+    125, Generating exit data delete(T_new[:][:],T[:][:])
+init:
+    191, Generating present(T[:][:])
+         Generating NVIDIA GPU code
+        191, #pragma acc loop gang, vector(128) collapse(2) /* blockIdx.x threadIdx.x */
+        192,   /* blockIdx.x threadIdx.x collapsed */
+    205, Generating present(T[:][:])
+         Generating NVIDIA GPU code
+        205, #pragma acc loop gang, vector(128) /* blockIdx.x threadIdx.x */
+    216, Generating present(T[:][:])
+         Generating NVIDIA GPU code
+        216, #pragma acc loop gang, vector(128) /* blockIdx.x threadIdx.x */
+/home/capc1/miniforge3/bin/ld: warning: /tmp/pgcudafatbYvfdxn0Lfyn.o: missing .note.GNU-stack section implies executable stack
+/home/capc1/miniforge3/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/tmp/nvcpgvfTaJlHyYS.o: in function `main':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:65:(.text+0x1bc): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:75:(.text+0x4a4): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:79:(.text+0x5bd): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:125:(.text+0x7be): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:93:(.text+0xdd2): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:95:(.text+0xe8d): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:95:(.text+0x1040): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:107:(.text+0x12c7): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:109:(.text+0x1365): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_openacc_GRIDY_500000.c:112:(.text+0x174f): relocation truncated to fit: R_X86_64_32 against symbol `T_new' defined in COMMON section in /tmp/nvcpgvfTaJlHyYS.o
+pgacclnk: child process exit status 1: /home/capc1/miniforge3/bin/ld

@@ -1,0 +1,130 @@
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 289: warning: variable "smxx" was declared but never referenced [declared_but_not_referenced]
+      double smxx, smxy, smyx, smyy, rho0rho;
+             ^
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 289: warning: variable "smxy" was declared but never referenced [declared_but_not_referenced]
+      double smxx, smxy, smyx, smyy, rho0rho;
+                   ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 289: warning: variable "smyx" was declared but never referenced [declared_but_not_referenced]
+      double smxx, smxy, smyx, smyy, rho0rho;
+                         ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 289: warning: variable "smyy" was declared but never referenced [declared_but_not_referenced]
+      double smxx, smxy, smyx, smyy, rho0rho;
+                               ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 290: warning: variable "lambda" was declared but never referenced [declared_but_not_referenced]
+      double wf[2], lambda=B - G, eta=G, trace;
+                    ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 290: warning: variable "eta" was declared but never referenced [declared_but_not_referenced]
+      double wf[2], lambda=B - G, eta=G, trace;
+                                  ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "tensterm" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+             ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "tensgamma" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+                             ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "distinit" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+                                              ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "xinitij" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+                                                        ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "yinitij" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+                                                                 ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 296: warning: variable "wfinit" was declared but never referenced [declared_but_not_referenced]
+      double tensterm = 0.0, tensgamma = 0.3, distinit, xinitij, yinitij, wfinit[2];
+                                                                          ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 744: warning: variable "n" was declared but never referenced [declared_but_not_referenced]
+      int n,i,j,count=0;
+          ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 748: warning: variable "temp" was declared but never referenced [declared_but_not_referenced]
+      double temp,x, y, val, radi, rado;
+             ^
+
+"./execution_sweep_temp/source/rubber-ring-sphere_omp45_N_10000.c", line 749: warning: variable "tempint" was declared but never referenced [declared_but_not_referenced]
+      int tempint;
+          ^
+
+main:
+    202, #omp target teams distribute parallel for
+        202, Generating "nvkernel_main_F1L202_2" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    202, Generating map(from:XO[:],YO[:]) 
+         Generating map(to:Y[:]) 
+         Generating map(from:VXO[:],VYO[:],RHOO[:],EO[:],SXXO[:],SXYO[:],SYYO[:]) 
+         Generating map(to:VY[:],X[:],SYY[:],VX[:],E[:],RHO[:],SXX[:],SXY[:]) 
+    215, #omp target teams distribute parallel for
+        215, Generating "nvkernel_main_F1L215_4" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    215, Generating map(from:VY[:],X[:],SYY[:],VX[:],E[:],RHO[:],SXX[:],SXY[:]) 
+         Generating map(to:XN[:]) 
+         Generating map(from:Y[:]) 
+         Generating map(to:YN[:],VXN[:],VYN[:],RHON[:],EN[:],SXXN[:],SXYN[:],SYYN[:]) 
+    227, #omp target teams distribute parallel for
+        227, Generating "nvkernel_main_F1L227_6" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    227, Generating map(from:VY[:],X[:],SYY[:],VX[:],E[:],RHO[:],SXX[:],SXY[:]) 
+         Generating map(to:XO[:]) 
+         Generating map(from:Y[:]) 
+         Generating map(to:YO[:],VXO[:],VYO[:],RHOO[:],EO[:],SXXO[:],SXYO[:],SYYO[:]) 
+    240, #omp target teams distribute parallel for
+        240, Generating "nvkernel_main_F1L240_8" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    240, Generating map(from:VY[:],X[:],SYY[:],VX[:],E[:],RHO[:],SXX[:],SXY[:]) 
+         Generating map(to:XN[:],YN[:],VXN[:],VYN[:],RHON[:],EN[:],SXXN[:],SXYN[:],SYYN[:],XO[:]) 
+         Generating map(from:Y[:]) 
+         Generating map(to:YO[:],VXO[:],VYO[:],RHOO[:],EO[:],SXXO[:],SXYO[:],SYYO[:]) 
+    262, #omp target teams distribute parallel for
+        262, Generating "nvkernel_main_F1L262_10" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+             Generating reduction(+:IE2,KE1,IE1,WP1,KE2)
+    262, Generating map(tofrom:KE2) 
+         Generating map(to:MASS[:],VX[:],DeltaWP[:]) 
+         Generating map(tofrom:IE2) 
+         Generating map(to:E[:]) 
+         Generating map(tofrom:KE1,IE1,WP1) 
+         Generating map(to:VY[:]) 
+derivatives:
+    318, #omp target teams distribute parallel for
+        318, Generating "nvkernel_derivatives_F1L318_22" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    329, #omp target teams distribute parallel for
+        329, Generating "nvkernel_derivatives_F1L329_24" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    537, #omp target teams distribute parallel for
+        537, Generating "nvkernel_derivatives_F1L537_26" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+Update:
+    611, #omp target teams distribute parallel for
+        611, Generating "nvkernel_Update_F1L611_34" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+plasticity:
+    633, #omp target teams distribute parallel for
+        633, Generating "nvkernel_plasticity_F1L633_38" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+initialize:
+    819, #omp target teams distribute parallel for
+        819, Generating "nvkernel_initialize_F1L819_42" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+             Generating reduction(+:tot_mass)
+    825, #omp target teams distribute parallel for
+        825, Generating "nvkernel_initialize_F1L825_44" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+             Generating reduction(+:tot_momentum)
+/home/capc1/miniforge3/bin/ld: warning: /tmp/pgcudafat7w6iX-_f--mo.o: missing .note.GNU-stack section implies executable stack
+/home/capc1/miniforge3/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker

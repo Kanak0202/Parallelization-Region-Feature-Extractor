@@ -1,0 +1,9 @@
+/home/capc1/miniforge3/bin/ld: /tmp/ccPBBaZm.o: in function `derivatives':
+rubber-ring-sphere_serial_N_5.c:(.text+0xe89): undefined reference to `pow'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_serial_N_5.c:(.text+0x1089): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_serial_N_5.c:(.text+0x14a6): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_serial_N_5.c:(.text+0x1948): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_serial_N_5.c:(.text+0x1c8f): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_serial_N_5.c:(.text+0x26c8): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: /tmp/ccPBBaZm.o:rubber-ring-sphere_serial_N_5.c:(.text+0x3b66): more undefined references to `sqrt' follow
+collect2: error: ld returned 1 exit status

@@ -1,0 +1,10 @@
+/home/capc1/miniforge3/bin/ld: /tmp/ccxTuIgR.o: in function `derivatives':
+rubber-ring-sphere_omp3_N_5000.c:(.text+0x8d4): undefined reference to `pow'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_omp3_N_5000.c:(.text+0xc15): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_omp3_N_5000.c:(.text+0xf5c): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_omp3_N_5000.c:(.text+0x1998): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: /tmp/ccxTuIgR.o: in function `viscosity':
+rubber-ring-sphere_omp3_N_5000.c:(.text+0x306f): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: rubber-ring-sphere_omp3_N_5000.c:(.text+0x30a1): undefined reference to `sqrt'
+/home/capc1/miniforge3/bin/ld: /tmp/ccxTuIgR.o:rubber-ring-sphere_omp3_N_5000.c:(.text+0x4520): more undefined references to `sqrt' follow
+collect2: error: ld returned 1 exit status

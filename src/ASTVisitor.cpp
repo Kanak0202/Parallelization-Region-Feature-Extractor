@@ -36,8 +36,9 @@ bool ASTVisitor::VisitFunctionDecl(clang::FunctionDecl *FD)
                 {
                     std::string path = RegionOutliner::outlineRegion(
                         region, FD, Context, outputDir, regionCounter++, regionDetector);
-                    if (!path.empty())
-                        std::cout << "Outlined region to: " << path << std::endl;
+                    if (!path.empty()){
+                        // std::cout << "Outlined region to: " << path << std::endl;
+                    }
                 }
             }
         }

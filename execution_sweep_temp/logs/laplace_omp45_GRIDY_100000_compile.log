@@ -1,0 +1,41 @@
+main:
+     60, Generating target enter data map(create: T[:][:],T_new[:][:])
+     62, Generating update to(T[:])
+     66, Generating update from(T[:])
+     70, Generating update to(T_new[:])
+     74, Generating update from(T_new[:])
+     88, #omp target teams distribute parallel for
+         88, Generating "nvkernel_main_F1L88_2" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+     88, Generating map(alloc:T_new[:][:],T[:][:]) 
+    102, #omp target teams distribute parallel for
+        102, Generating "nvkernel_main_F1L102_4" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+             Generating reduction(max:dt)
+    102, Generating map(tofrom:dt) 
+         Generating map(alloc:T_new[:][:],T[:][:]) 
+    120, Generating target exit data map(delete: T_new[:][:],T[:][:]) finalize
+init:
+    186, #omp target teams distribute parallel for
+        186, Generating "nvkernel_init_F1L186_10" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    200, #omp target teams distribute parallel for
+        200, Generating "nvkernel_init_F1L200_12" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    211, #omp target teams distribute parallel for
+        211, Generating "nvkernel_init_F1L211_14" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+/home/capc1/miniforge3/bin/ld: warning: /tmp/pgcudafatoQqfQoq9sRqI.o: missing .note.GNU-stack section implies executable stack
+/home/capc1/miniforge3/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/tmp/nvc3-pfL3yBfnlj.o: in function `main':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:88:(.text+0x7bb): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:87:(.text+0x8d2): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:102:(.text+0xde7): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:101:(.text+0xefe): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/tmp/nvc3-pfL3yBfnlj.o: in function `__nv_main_F1L88_1_F1L88_5_F1L88_7':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:90:(.text+0x2058): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/tmp/nvc3-pfL3yBfnlj.o: in function `__nv_main_F1L102_3_F1L102_6_F1L102_8':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:104:(.text+0x228d): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:104:(.text+0x22d6): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/laplace_omp45_GRIDY_100000.c:105:(.text+0x230f): relocation truncated to fit: R_X86_64_32S against symbol `T_new' defined in COMMON section in /tmp/nvc3-pfL3yBfnlj.o
+pgacclnk: child process exit status 1: /home/capc1/miniforge3/bin/ld

@@ -1,0 +1,13 @@
+/tmp/ccz3ZLZ7.o: in function `__capc_report':
+laplace_omp3_GRIDY_500000.c:(.text+0x49): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x5c): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x69): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0xa3): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0xb0): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0xf0): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x107): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x114): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x14e): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x15b): relocation truncated to fit: R_X86_64_32S against `.bss'
+laplace_omp3_GRIDY_500000.c:(.text+0x1a4): additional relocation overflows omitted from the output
+collect2: error: ld returned 1 exit status

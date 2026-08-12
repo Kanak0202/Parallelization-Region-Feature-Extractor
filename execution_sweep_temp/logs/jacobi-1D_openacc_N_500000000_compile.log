@@ -1,0 +1,43 @@
+"./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c", line 35: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int i, j;
+                 ^
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+"./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c", line 50: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int i, j;
+                 ^
+
+"./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c", line 63: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int t, i, j;
+                    ^
+
+init_array:
+     39, Generating present(b[:],a[:])
+         Generating NVIDIA GPU code
+         39, #pragma acc loop gang, vector(128) /* blockIdx.x threadIdx.x */
+main:
+     68, Generating enter data create(a[:],b[:])
+     70, Generating update device(a[:])
+     74, Generating update self(a[:])
+     78, Generating update device(b[:])
+     82, Generating update self(b[:])
+     95, Generating present(a[:],b[:])
+         Generating NVIDIA GPU code
+         95, #pragma acc loop gang, vector(128) /* blockIdx.x threadIdx.x */
+    106, Generating present(b[:],a[:])
+         Generating NVIDIA GPU code
+        106, #pragma acc loop gang, vector(128) /* blockIdx.x threadIdx.x */
+    119, Generating update self(b[:],a[:])
+    129, Generating exit data delete(b[:],a[:])
+/home/capc1/miniforge3/bin/ld: warning: /tmp/pgcudafatv1zfb-paSrVWd.o: missing .note.GNU-stack section implies executable stack
+/home/capc1/miniforge3/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/tmp/nvcl8yfbHyip8hE0.o: in function `init_array':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c:42:(.text+0x20e): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcl8yfbHyip8hE0.o
+/tmp/nvcl8yfbHyip8hE0.o: in function `print_array':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c:58:(.text+0x505): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcl8yfbHyip8hE0.o
+/tmp/nvcl8yfbHyip8hE0.o: in function `main':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c:97:(.text+0xf1f): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcl8yfbHyip8hE0.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c:122:(.text+0x1570): relocation truncated to fit: R_X86_64_PC32 against symbol `b' defined in COMMON section in /tmp/nvcl8yfbHyip8hE0.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_openacc_N_500000000.c:123:(.text+0x1589): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcl8yfbHyip8hE0.o
+pgacclnk: child process exit status 1: /home/capc1/miniforge3/bin/ld

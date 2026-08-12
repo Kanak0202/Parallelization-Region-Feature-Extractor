@@ -1,0 +1,52 @@
+"./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c", line 30: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int i, j;
+                 ^
+
+Remark: individual warnings can be suppressed with "--diag_suppress <warning-name>"
+
+"./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c", line 45: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int i, j;
+                 ^
+
+"./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c", line 58: warning: variable "j" was declared but never referenced [declared_but_not_referenced]
+          int t, i, j;
+                    ^
+
+init_array:
+     34, #omp target teams distribute parallel for
+         34, Generating "nvkernel_init_array_F1L34_2" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+main:
+     63, Generating target enter data map(create: b[:],a[:])
+     65, Generating update to(a[:])
+     69, Generating update from(a[:])
+     73, Generating update to(b[:])
+     77, Generating update from(b[:])
+     90, #omp target teams distribute parallel for
+         90, Generating "nvkernel_main_F1L90_6" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+     90, Generating map(alloc:b[:],a[:]) 
+    101, #omp target teams distribute parallel for
+        101, Generating "nvkernel_main_F1L101_8" GPU kernel
+             Loop parallelized across teams and threads(128), schedule(static)
+    101, Generating map(alloc:b[:],a[:]) 
+    114, Generating update from(b[:],a[:])
+    124, Generating target exit data map(delete: b[:],a[:]) finalize
+/home/capc1/miniforge3/bin/ld: warning: /tmp/pgcudafatObBfb49MJe50i.o: missing .note.GNU-stack section implies executable stack
+/home/capc1/miniforge3/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker
+/tmp/nvcTpAfbhRX0W84t.o: in function `init_array':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:34:(.text+0x188): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:34:(.text+0x1f9): relocation truncated to fit: R_X86_64_32 against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:33:(.text+0x28d): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/tmp/nvcTpAfbhRX0W84t.o: in function `__nv_init_array_F1L34_1_F1L34_3_F1L34_4':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:37:(.text+0x81c): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/tmp/nvcTpAfbhRX0W84t.o: in function `print_array':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:53:(.text+0x8ba): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/tmp/nvcTpAfbhRX0W84t.o: in function `main':
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:63:(.text+0xa73): relocation truncated to fit: R_X86_64_32 against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:73:(.text+0xcf2): relocation truncated to fit: R_X86_64_32 against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:77:(.text+0xddf): relocation truncated to fit: R_X86_64_32 against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:90:(.text+0xf84): relocation truncated to fit: R_X86_64_32S against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:90:(.text+0xfeb): relocation truncated to fit: R_X86_64_32 against symbol `b' defined in COMMON section in /tmp/nvcTpAfbhRX0W84t.o
+/home/capc1/ProfitabilityTool-new-27-07-26/ProfitabilityTool/./execution_sweep_temp/source/jacobi-1D_omp45_N_1000000000.c:89:(.text+0x105b): additional relocation overflows omitted from the output
+pgacclnk: child process exit status 1: /home/capc1/miniforge3/bin/ld

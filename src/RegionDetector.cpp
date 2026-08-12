@@ -206,7 +206,7 @@ std::cout << "Searching for loop at line: "
         unsigned end =
             region.getEndLine(SM);
 
-	std::cout << "Checking region ["<<begin<<","<<end<<"]\n";
+	// std::cout << "Checking region ["<<begin<<","<<end<<"]\n";
         if (lineNumber >= begin &&
             lineNumber <= end)
         {

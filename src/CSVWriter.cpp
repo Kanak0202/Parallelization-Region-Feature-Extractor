@@ -27,7 +27,7 @@ void appendRegionToCSV(const std::string &csvPath,
                "IntArithmetic,FloatArithmetic,IntMultiply,FloatMultiply,"
                "IntDivision,FloatDivision,SpecialFunctions,FMAOperations,"
                "Loads,Stores,BytesRead,BytesWritten,StrideClass,"
-               "IndirectAccesses,ReductionVars,FunctionCalls,ArraysAccessed,BranchCount\n";
+               "IndirectAccesses,ReductionVars,FunctionCalls,ArraysAccessed,BranchCount,SerialTime,OpenMP3Time,OpenMP45ResidentTime,OpenMP45IsolatedTime,OpenACCResidentTime,OpenACCIsolatedTime\n";
     }
 
     ofs << regionId << ",\"" << fileName << "\","

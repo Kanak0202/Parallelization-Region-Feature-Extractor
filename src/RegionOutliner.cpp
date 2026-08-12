@@ -95,7 +95,7 @@ std::string extractPreamble(clang::SourceManager &SM, clang::FileID FID,
     unsigned lineNo = 0;
     while (std::getline(stream, line))
     {
-        std::cerr << "[LINE " << lineNo << "] " << line << "\n";
+        // std::cerr << "[LINE " << lineNo << "] " << line << "\n";
         ++lineNo;
         if (lineNo >= enclosingFuncLine) break;
         size_t p = line.find_first_not_of(" \t\r");
@@ -115,7 +115,7 @@ std::string extractPreamble(clang::SourceManager &SM, clang::FileID FID,
 
         if (isInclude || (isDefine && !suppressDefines))
         {
-            std::cerr << "[PREAMBLE] " << trimmed << "\n";
+            // std::cerr << "[PREAMBLE] " << trimmed << "\n";
             preamble += line + "\n";
             continue;
         }
