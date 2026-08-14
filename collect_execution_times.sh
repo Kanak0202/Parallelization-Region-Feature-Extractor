@@ -63,6 +63,7 @@
 # Arguments
 # =====================================================================
 
+ulimit -s unlimited
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 <features.csv>"
@@ -653,6 +654,7 @@ compile_and_run()
                 -fopenmp \
                 "$TEMP_SOURCE" \
                 -o "$BINARY" \
+                -lm \
                 > "$COMPILE_LOG" 2>&1
             ;;
 
@@ -663,6 +665,7 @@ compile_and_run()
                 -fopenmp \
                 "$TEMP_SOURCE" \
                 -o "$BINARY" \
+                -lm \
                 > "$COMPILE_LOG" 2>&1
             ;;
 
@@ -674,6 +677,7 @@ compile_and_run()
                 -Minfo=mp \
                 "$TEMP_SOURCE" \
                 -o "$BINARY" \
+                -lm \
                 > "$COMPILE_LOG" 2>&1
             ;;
 
@@ -686,6 +690,7 @@ compile_and_run()
                 -Minfo=accel \
                 "$TEMP_SOURCE" \
                 -o "$BINARY" \
+                -lm \
                 > "$COMPILE_LOG" 2>&1
             ;;
 
@@ -705,11 +710,20 @@ compile_and_run()
     if [ $COMPILE_STATUS -ne 0 ]; then
 
         echo "    [$TOOL] Compilation FAILED."
+        echo "    Compile log: $COMPILE_LOG"
 
-        echo "    Compile log:"
-        echo "    $COMPILE_LOG"
+        # Keep only a small part of the compile log
+        if [ -f "$COMPILE_LOG" ]; then
+            tail -n 100 "$COMPILE_LOG" > "${COMPILE_LOG}.tmp"
+            mv "${COMPILE_LOG}.tmp" "$COMPILE_LOG"
+        fi
 
-        return 1
+        rm -f "$TEMP_SOURCE"
+        rm -f "$BINARY"
+
+        # Special return code:
+        # 2 = compilation failure
+        return 2
     fi
 
 
@@ -821,44 +835,15 @@ compile_and_run()
 
 # =====================================================================
 # Main execution sweep
+#
+# If ANY paradigm fails to compile for a Benchmark+Parameter at value X,
+# all larger values for that same Benchmark+Parameter are skipped.
 # =====================================================================
-
-# =====================================================================
-# Benchmark failure state
-#
-# If ANY paradigm fails for a benchmark/parameter/value, all larger
-# values of that parameter for that benchmark are skipped.
-#
-# Example:
-#
-#   3mm|N
-#
-# means the N sweep for 3mm has failed and must not continue.
-# =====================================================================
-
-declare -A BENCHMARK_FAILED
-
-mark_benchmark_failed()
-{
-    local BENCHMARK="$1"
-    local PARAMETER="$2"
-
-    local KEY="${BENCHMARK}|${PARAMETER}"
-
-    BENCHMARK_FAILED["$KEY"]=1
-}
-
-benchmark_is_failed()
-{
-    local BENCHMARK="$1"
-    local PARAMETER="$2"
-
-    local KEY="${BENCHMARK}|${PARAMETER}"
-
-    [[ "${BENCHMARK_FAILED[$KEY]:-0}" == "1" ]]
-}
 
 CURRENT=0
+
+# Stores Benchmark|Parameter combinations that should no longer be tested
+declare -A STOP_SWEEP
 
 
 while IFS='|' read -r BENCHMARK PARAMETER VALUE
@@ -867,6 +852,37 @@ do
     [ -z "$BENCHMARK" ] && continue
 
     CURRENT=$((CURRENT + 1))
+
+    SWEEP_KEY="${BENCHMARK}|${PARAMETER}"
+
+
+    # -----------------------------------------------------------------
+    # Check whether a smaller value already failed compilation
+    # -----------------------------------------------------------------
+
+    if [ "${STOP_SWEEP[$SWEEP_KEY]}" = "1" ]; then
+
+        echo
+        echo "======================================================================"
+        echo "Experiment $CURRENT / $TOTAL_EXPERIMENTS"
+        echo "======================================================================"
+        echo "Benchmark : $BENCHMARK"
+        echo "Parameter : $PARAMETER"
+        echo "Value     : $VALUE"
+        echo "======================================================================"
+        echo
+        echo "SKIPPED:"
+        echo "A compilation or execution failure occurred at a smaller value for:"
+        echo
+        echo "    Benchmark : $BENCHMARK"
+        echo "    Parameter : $PARAMETER"
+        echo
+        echo "Therefore value $VALUE and all subsequent larger values are skipped."
+        echo
+
+        continue
+    fi
+
 
     echo
     echo "======================================================================"
@@ -879,19 +895,8 @@ do
     echo
 
 
-    # =================================================================
-    # Check whether this benchmark/parameter sweep has already failed
-    # =================================================================
+    CONFIGURATION_FAILED=0
 
-    if benchmark_is_failed "$BENCHMARK" "$PARAMETER"; then
-
-        echo "    SKIPPED"
-        echo "    A previous value of $PARAMETER failed for benchmark"
-        echo "    '$BENCHMARK'."
-        echo "    All larger values are being skipped."
-
-        continue
-    fi
 
     # =================================================================
     # Serial
@@ -903,10 +908,22 @@ do
         "$PARAMETER" \
         "$VALUE"
 
-    SERIAL_STATUS=$?
+    STATUS=$?
+
+    if [ $STATUS -ne 0 ]; then
+
+        echo
+        echo "    Serial failed at this value."
+
+        CONFIGURATION_FAILED=1
+    fi
+
 
     # =================================================================
     # OpenMP 3
+    #
+    # We still test all paradigms at the CURRENT value so we know
+    # exactly which ones compile and which do not.
     # =================================================================
 
     compile_and_run \
@@ -915,7 +932,16 @@ do
         "$PARAMETER" \
         "$VALUE"
 
-    OMP3_STATUS=$?
+    STATUS=$?
+
+    if [ $STATUS -ne 0 ]; then
+
+        echo
+        echo "    OpenMP3 failed at this value."
+
+        CONFIGURATION_FAILED=1
+    fi
+
 
     # =================================================================
     # OpenMP 4.5
@@ -927,7 +953,16 @@ do
         "$PARAMETER" \
         "$VALUE"
 
-    OMP45_STATUS=$?
+    STATUS=$?
+
+    if [ $STATUS -ne 0 ]; then
+
+        echo
+        echo "    OpenMP4.5 failed at this value."
+
+        CONFIGURATION_FAILED=1
+    fi
+
 
     # =================================================================
     # OpenACC
@@ -939,42 +974,40 @@ do
         "$PARAMETER" \
         "$VALUE"
 
-    OPENACC_STATUS=$?
+    STATUS=$?
 
-    # =================================================================
-    # Configuration validity
-    #
-    # If ANY paradigm failed, stop the entire sweep for this
-    # benchmark/parameter.
-    # =================================================================
-
-    if [ $SERIAL_STATUS -ne 0 ] || \
-       [ $OMP3_STATUS -ne 0 ] || \
-       [ $OMP45_STATUS -ne 0 ] || \
-       [ $OPENACC_STATUS -ne 0 ]; then
+    if [ $STATUS -ne 0 ]; then
 
         echo
-        echo "======================================================================"
-        echo "CONFIGURATION FAILURE"
-        echo "======================================================================"
+        echo "    OpenACC failed at this value."
 
+        CONFIGURATION_FAILED=1
+    fi
+
+
+    # =================================================================
+    # Stop larger values if ANY compilation failed
+    # =================================================================
+
+    if [ $CONFIGURATION_FAILED -eq 1 ]; then
+
+        STOP_SWEEP[$SWEEP_KEY]=1
+
+        echo
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "Execution/Compilation limit reached"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
         echo "Benchmark : $BENCHMARK"
         echo "Parameter : $PARAMETER"
         echo "Value     : $VALUE"
         echo
-        echo "Status:"
-        echo "    Serial   : $([ $SERIAL_STATUS -eq 0 ] && echo SUCCESS || echo FAILED)"
-        echo "    OpenMP3  : $([ $OMP3_STATUS -eq 0 ] && echo SUCCESS || echo FAILED)"
-        echo "    OpenMP45 : $([ $OMP45_STATUS -eq 0 ] && echo SUCCESS || echo FAILED)"
-        echo "    OpenACC  : $([ $OPENACC_STATUS -eq 0 ] && echo SUCCESS || echo FAILED)"
+        echo "At least one paradigm failed to compile or execute."
         echo
-        echo "All subsequent values of $PARAMETER for '$BENCHMARK' will be skipped."
-        echo "======================================================================"
-
-        mark_benchmark_failed \
-            "$BENCHMARK" \
-            "$PARAMETER"
+        echo "All larger values for this Benchmark/Parameter will now be skipped."
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo
     fi
+
 
 done < "$EXPERIMENT_FILE"
 

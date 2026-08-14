@@ -1,4 +1,4 @@
-/tmp/ccVKKKEW.o: in function `__capc_report':
+/tmp/ccrBIf2B.o: in function `__capc_report':
 jacobi-1D_serial_N_200000000.c:(.text+0x49): relocation truncated to fit: R_X86_64_32S against `.bss'
 jacobi-1D_serial_N_200000000.c:(.text+0x5c): relocation truncated to fit: R_X86_64_32S against `.bss'
 jacobi-1D_serial_N_200000000.c:(.text+0x69): relocation truncated to fit: R_X86_64_32S against `.bss'
