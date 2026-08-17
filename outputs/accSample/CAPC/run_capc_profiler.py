@@ -4,56 +4,14 @@ import sys
 import re
 import subprocess
 import argparse
+import tempfile
 import resource
 
-# Expand stack size to prevent segmentation faults on large array allocations
+# Expand stack size to prevent limits on large matrix allocations
 try:
     resource.setrlimit(resource.RLIMIT_STACK, (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
 except Exception:
     pass
-
-PROFILER_SRC = "acc_profiler.c"
-PROFILER_SO = "libaccprof.so"
-
-def ensure_profiler_so(base_dir):
-    """Compiles libaccprof.so using nvc to match NVHPC OpenACC runtime ABI."""
-    so_path = os.path.abspath(os.path.join(base_dir, PROFILER_SO))
-    src_path = os.path.abspath(os.path.join(base_dir, PROFILER_SRC))
-
-    if not os.path.exists(src_path):
-        print(f"[-] Error: '{src_path}' not found in '{base_dir}'.")
-        sys.exit(1)
-
-    print(f"[*] Compiling OpenACC profiler library: nvc -shared -fPIC -acc {src_path} -o {so_path}")
-    compile_cmd = ["nvc", "-shared", "-fPIC", "-acc", src_path, "-o", so_path]
-    res = subprocess.run(compile_cmd, capture_output=True, text=True)
-    
-    if res.returncode != 0:
-        print(f"[!] nvc shared build failed, retrying with gcc...")
-        compile_cmd = ["gcc", "-shared", "-fPIC", src_path, "-o", so_path]
-        res = subprocess.run(compile_cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            print(f"[-] Failed to build profiler library:\n{res.stderr}")
-            sys.exit(1)
-            
-    return so_path
-
-def compile_openacc_program(source_file, exec_name, gpu_arch="cc70"):
-    """Compiles the target program using nvc."""
-    compile_cmd = [
-        "nvc",
-        "-acc",
-        f"-gpu={gpu_arch}",
-        "-Minfo=accel",
-        source_file,
-        "-o",
-        exec_name
-    ]
-    print(f"[*] Compiling program: {' '.join(compile_cmd)}")
-    res = subprocess.run(compile_cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        print(f"[-] Compilation failed for '{source_file}':\n{res.stderr}")
-        sys.exit(1)
 
 def parse_regions(source_file):
     """Parses #pragma capc profitability_region begin / end line ranges."""
@@ -81,57 +39,183 @@ def parse_regions(source_file):
 
     return regions
 
-def find_target_region(line_no, regions):
-    """Maps profiler event line numbers to the corresponding CAPC region."""
-    for i, reg in enumerate(regions):
-        if reg["begin_line"] <= line_no <= reg["end_line"]:
-            return reg
-        
-        next_begin = regions[i + 1]["begin_line"] if i + 1 < len(regions) else float('inf')
-        if reg["end_line"] < line_no < next_begin:
-            return reg
-
-    return None
-
-def run_executable(exec_path, profiler_so_path):
-    """Executes binary with ACC_PROFLIB environment variables."""
-    env = os.environ.copy()
-    env["ACC_PROFLIB"] = profiler_so_path
-    env["NV_ACC_PROFLIB"] = profiler_so_path
-    env["LD_LIBRARY_PATH"] = os.path.dirname(profiler_so_path) + ":" + env.get("LD_LIBRARY_PATH", "")
+def get_associated_region_id(line_num, regions):
+    """Maps any statement line (including data pragmas outside regions) to its parent region."""
+    if not regions:
+        return 1
     
-    print(f"[*] Executing target binary with ACC_PROFLIB={profiler_so_path}\n")
-    res = subprocess.run([exec_path], env=env, capture_output=True, text=True)
+    # 1. Statement inside a region
+    for reg in regions:
+        if reg["begin_line"] <= line_num <= reg["end_line"]:
+            return reg["id"]
+            
+    # 2. Statement before first region -> attribute to Region 1
+    if line_num < regions[0]["begin_line"]:
+        return regions[0]["id"]
+        
+    # 3. Statement between regions -> attribute to preceding region
+    for i in range(len(regions) - 1):
+        if regions[i]["end_line"] < line_num < regions[i+1]["begin_line"]:
+            return regions[i]["id"]
+            
+    # 4. Statement after last region -> attribute to final region
+    return regions[-1]["id"]
+
+def consume_statement(lines, idx):
+    """
+    Recursively scans and consumes the complete C statement/block following an OpenACC directive.
+    """
+    n = len(lines)
+    while idx < n:
+        line_str = lines[idx].strip()
+        
+        if not line_str or line_str.startswith("//") or line_str.startswith("/*"):
+            idx += 1
+            continue
+        
+        if line_str.startswith("#pragma"):
+            idx += 1
+            continue
+            
+        if "{" in line_str:
+            brace_depth = 0
+            while idx < n:
+                l = lines[idx]
+                brace_depth += l.count("{") - l.count("}")
+                idx += 1
+                if brace_depth <= 0:
+                    break
+            return idx
+
+        elif any(line_str.startswith(kw) for kw in ["for", "while", "if", "do"]):
+            idx += 1
+            idx = consume_statement(lines, idx)
+            return idx
+
+        else:
+            idx += 1
+            while idx < n and ";" not in line_str:
+                line_str = lines[idx].strip()
+                idx += 1
+            return idx
+
+    return idx
+
+def instrument_openacc_source(source_path, temp_path, regions):
+    """
+    Instruments C source by inserting timers around OpenACC compute kernels and data transfers.
+    """
+    with open(source_path, 'r') as f:
+        lines = f.readlines()
+
+    instrumented = [
+        "#include <omp.h>\n#include <stdio.h>\n#include <openacc.h>\n",
+        "static double _capc_dt0, _capc_dt1;\n",
+        "static double _capc_k0, _capc_k1;\n\n"
+    ]
+    
+    i = 0
+    n = len(lines)
+
+    while i < n:
+        line = lines[i]
+        line_str = line.strip()
+        line_num = i + 1
+
+        # Case A: Detect OpenACC Data Movement Directives (enter data, exit data, update)
+        if "#pragma acc" in line_str and any(kw in line_str for kw in ["enter data", "exit data", "update"]):
+            reg_id = get_associated_region_id(line_num, regions)
+            instrumented.append("  _capc_dt0 = omp_get_wtime();\n")
+            instrumented.append(line)
+            instrumented.append("  #pragma acc wait\n")  # Ensure data transfer synchronizes
+            instrumented.append("  _capc_dt1 = omp_get_wtime();\n")
+            instrumented.append(
+                f'  printf("[PROFILER] transfer region:{reg_id} line:{line_num} | Transfer Time = %.9f s\\n", '
+                f'_capc_dt1 - _capc_dt0);\n'
+            )
+            i += 1
+            continue
+
+        # Case B: Detect OpenACC GPU Compute Kernels (parallel, kernels, serial)
+        if "#pragma acc" in line_str and any(kw in line_str for kw in ["parallel", "kernels", "serial"]):
+            reg_id = get_associated_region_id(line_num, regions)
+            instrumented.append("  _capc_k0 = omp_get_wtime();\n")
+            instrumented.append(line)
+            i += 1
+            
+            end_idx = consume_statement(lines, i)
+            while i < end_idx:
+                instrumented.append(lines[i])
+                i += 1
+
+            instrumented.append("  #pragma acc wait\n")  # Ensure GPU kernel completion before timing
+            instrumented.append("  _capc_k1 = omp_get_wtime();\n")
+            instrumented.append(
+                f'  printf("[PROFILER] kernel region:{reg_id} line:{line_num} | Kernel Execution Time = %.9f s\\n", '
+                f'_capc_k1 - _capc_k0);\n'
+            )
+            continue
+
+        instrumented.append(line)
+        i += 1
+
+    with open(temp_path, 'w') as f:
+        f.writelines(instrumented)
+
+def compile_openacc_program(source_file, exec_name, gpu_arch="cc70"):
+    """Compiles instrumented OpenACC C program using nvc."""
+    compile_cmd = [
+        "nvc",
+        "-acc",
+        "-mp",  # Enabled for omp_get_wtime()
+        f"-gpu={gpu_arch}",
+        "-Minfo=accel",
+        source_file,
+        "-o",
+        exec_name
+    ]
+    print(f"[*] Compiling OpenACC program: {' '.join(compile_cmd)}")
+    res = subprocess.run(compile_cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"[-] Compilation failed for '{source_file}':\n{res.stderr}")
+        sys.exit(1)
+
+def run_executable(exec_path):
+    """Executes target binary and captures standard output."""
+    print(f"[*] Executing target OpenACC binary: {exec_path}\n")
+    res = subprocess.run([exec_path], capture_output=True, text=True)
     return res.stdout, res.stderr, res.returncode
 
 def process_profiler_output(stdout_str, stderr_str, returncode, regions):
-    """Parses kernel and transfer logs into Resident, Transfer, and Invocation metrics."""
+    """Parses kernel and data transfer logs to aggregate Resident and Observed region times."""
     combined_log = stdout_str + "\n" + stderr_str
-    pattern = re.compile(r"\[PROFILER\].*?:(\d+)\s+\|\s+(.*?)\s+=\s+([\d\.]+)\s+s")
+    pattern = re.compile(r"\[PROFILER\]\s+(kernel|transfer)\s+region:(\d+)\s+line:(\d+)\s+\|\s+(.*?)\s+=\s+([\d\.]+)\s+s")
 
     matched_events = 0
+    region_map = {reg["id"]: reg for reg in regions}
+
     for line in combined_log.splitlines():
         match = pattern.search(line)
         if match:
             matched_events += 1
-            line_no = int(match.group(1))
-            event_type = match.group(2)
-            duration = float(match.group(3))
+            event_cat = match.group(1)
+            reg_id = int(match.group(2))
+            duration = float(match.group(5))
 
-            region = find_target_region(line_no, regions)
-            if region:
-                if "Kernel Execution Time" in event_type:
-                    region["resident_time"] += duration
-                    region["count"] += 1  # Increment invocation count on kernel launch
-                elif "Transfer" in event_type:
-                    region["transfer_time"] += duration
+            if reg_id in region_map:
+                reg = region_map[reg_id]
+                if event_cat == "kernel":
+                    reg["resident_time"] += duration
+                    reg["count"] += 1
+                elif event_cat == "transfer":
+                    reg["transfer_time"] += duration
 
     if matched_events == 0:
         print("[!] Warning: No [PROFILER] output logs were detected.")
         print(f"[!] Executable Return Code: {returncode}")
 
 def print_results(regions):
-    """Displays formatted results including Invocation Counts and Averages."""
+    """Renders the CAPC Profitability Region Report table."""
     header = (
         f"{'Region':<8} | {'Lines':<8} | {'Invocations':<11} | "
         f"{'Total Res(s)':<12} | {'Avg Res(s)':<12} | "
@@ -140,7 +224,7 @@ def print_results(regions):
     divider = "-" * len(header)
 
     print(divider)
-    print("                           CAPC PROFITABILITY REGION REPORT")
+    print("                    CAPC PROFITABILITY REGION REPORT (OPENACC)")
     print(divider)
     print(header)
     print(divider)
@@ -150,9 +234,9 @@ def print_results(regions):
     total_invocations = 0
 
     for reg in regions:
-        count = max(reg["count"], 1)  # Guard against division by zero
+        count = max(reg["count"], 1)
         observed_time = reg["resident_time"] + reg["transfer_time"]
-        
+
         avg_resident = reg["resident_time"] / count
         avg_observed = observed_time / count
 
@@ -178,9 +262,9 @@ def print_results(regions):
     print(divider + "\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Compile, Run, and Profile OpenACC Regions in one command.")
-    parser.add_argument("source", help="Path to OpenACC source C file (e.g., jacobi-1D_acc.c)")
-    parser.add_argument("--gpu", default="cc70", help="GPU compute capability architecture (default: cc70)")
+    parser = argparse.ArgumentParser(description="Compile, Run, and Profile OpenACC Regions with Data Transfer Tracking.")
+    parser.add_argument("source", help="Path to OpenACC source C file")
+    parser.add_argument("--gpu", default="cc70", help="GPU architecture (default: cc70)")
 
     args = parser.parse_args()
 
@@ -193,24 +277,24 @@ def main():
     exec_name = os.path.splitext(os.path.basename(source_path))[0]
     exec_path = os.path.join(work_dir, exec_name)
 
-    # Step 1: Ensure profiler .so exists
-    profiler_so_path = ensure_profiler_so(work_dir)
-
-    # Step 2: Parse source code regions
     regions = parse_regions(source_path)
     if not regions:
         print("Error: No '#pragma capc profitability_region' blocks found in source file.")
         sys.exit(1)
 
-    # Step 3: Compile source code with nvc
-    compile_openacc_program(source_path, exec_path, gpu_arch=args.gpu)
+    temp_fd, temp_source_path = tempfile.mkstemp(suffix=".c", dir=work_dir)
+    os.close(temp_fd)
 
-    # Step 4: Run executable & process metrics
-    stdout_str, stderr_str, returncode = run_executable(exec_path, profiler_so_path)
-    process_profiler_output(stdout_str, stderr_str, returncode, regions)
+    try:
+        instrument_openacc_source(source_path, temp_source_path, regions)
+        compile_openacc_program(temp_source_path, exec_path, gpu_arch=args.gpu)
+        stdout_str, stderr_str, returncode = run_executable(exec_path)
+        process_profiler_output(stdout_str, stderr_str, returncode, regions)
+        print_results(regions)
 
-    # Step 5: Output report
-    print_results(regions)
+    finally:
+        if os.path.exists(temp_source_path):
+            os.remove(temp_source_path)
 
 if __name__ == "__main__":
     main()

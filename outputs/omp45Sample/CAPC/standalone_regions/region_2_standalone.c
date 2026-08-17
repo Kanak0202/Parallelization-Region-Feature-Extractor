@@ -3,11 +3,43 @@
 #include <time.h>
 #include <omp.h>
 
-//3 Matrix Multiplications (E=A.B; F=C.D; G=E.F)
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <unistd.h>
+#include <sys/time.h>
 
-#include<stdio.h>
+#define N 49000000
+#define T 500
 
-#define N 8000
+double a[N];
+double b[N];
+
+void init_array()
+{
+        int i, j;
+        #pragma capc profitability_region begin
+        #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
+        for (i=0; i<N; i++)
+        {
+                a[i] = ((double)i)/N;
+                b[i] = ((double)i+1)/N;
+        }
+        #pragma capc profitability_region end
+}
+
+void print_array()
+{
+        int i, j;
+
+        for (i=0; i<N; i++)
+                printf("%lf ", a[i]);
+
+        printf("\n");
+
+        for (i=0; i<N; i++)
+                printf("%lf ", b[i]);
+}
 
 
 int main()
@@ -18,31 +50,9 @@ int main()
     double t_h2d = 0.0, t_exec = 0.0, t_d2h = 0.0;
 
     /* === STAGE 1 & 2: Interleaved Setup & Prerequisite Regions === */
-    double a[N][N],b[N][N],c[N][N],d[N][N],e[N][N],f[N][N],result[N][N];
+    #pragma omp target enter data map(alloc:a[0:N],b[0:N])
 
-    #pragma omp target enter data map(alloc:a[0:N][0:N],b[0:N][0:N],c[0:N][0:N],d[0:N][0:N],e[0:N][0:N],f[0:N][0:N],result[0:N][0:N])
-
-	//Array Initialization
-
-    // Dependent Region 1
-        #pragma capc profitability_region begin
-    #pragma omp target teams distribute parallel for collapse(2) private(i,j)
-	for(i=0;i<N;i++)
-	{
-		for(j=0;j<N;j++)
-		{
-			a[i][j]=(double)(0.1*i+j);	
-			b[i][j]=(double)(0.2*j+i);
-			c[i][j]=(double)(0.3*i+j);
-			d[i][j]=(double)(0.4*j+i);
-			e[i][j]=(double)(0.5*i+j);
-			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
-		}
-	}
-    #pragma capc profitability_region end
-
-    //result = a.b
+        init_array();
 
     /* === STAGE 3a: Pre-timing H2D Copyin skipped (write-only or has prior dependencies) === */
 
@@ -50,11 +60,11 @@ int main()
     clock_gettime(CLOCK_MONOTONIC, &start_exec);
 
         #pragma capc profitability_region begin
-    #pragma omp target teams distribute parallel for collapse(2) private(i,j,k)
-	for (i = 0; i < N; i++)
-		for (j = 0; j < N; j++)
-			for (k = 0; k < N; k++)
-				result[i][j]= result[i][j]+a[i][k]*b[k][j];
+    #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
+                for (i = 2; i < N - 1; i++)
+                {
+                        b[i] = 0.33333 * (a[i-1] + a[i] + a[i + 1]);
+                }
     #pragma capc profitability_region end
 
     clock_gettime(CLOCK_MONOTONIC, &end_exec);
@@ -62,7 +72,7 @@ int main()
 
     /* === STAGE 3c: Timed Device -> Host (D2H) Data Transfer === */
     clock_gettime(CLOCK_MONOTONIC, &start_d2h);
-    #pragma omp target update from(result[0:N][0:N], a[0:N][0:N], b[0:N][0:N])
+    #pragma omp target update from(a[0:N], b[0:N])
     clock_gettime(CLOCK_MONOTONIC, &end_d2h);
     t_d2h = (end_d2h.tv_sec - start_d2h.tv_sec) + (end_d2h.tv_nsec - start_d2h.tv_nsec) / 1e9;
 

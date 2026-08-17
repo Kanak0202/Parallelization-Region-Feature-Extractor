@@ -3,11 +3,43 @@
 #include <time.h>
 #include <stdio.h>
 
-//3 Matrix Multiplications (E=A.B; F=C.D; G=E.F)
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <unistd.h>
+#include <sys/time.h>
 
-#include<stdio.h>
+#define N 49000000
+#define T 500
 
-#define N 8000
+double a[N];
+double b[N];
+
+void init_array()
+{
+        int i, j;
+        #pragma capc profitability_region begin
+        #pragma acc parallel loop present(a[0:N],b[0:N])
+        for (i=0; i<N; i++)
+        {
+                a[i] = ((double)i)/N;
+                b[i] = ((double)i+1)/N;
+        }
+        #pragma capc profitability_region end
+}
+
+void print_array()
+{
+        int i, j;
+
+        for (i=0; i<N; i++)
+                printf("%lf ", a[i]);
+
+        printf("\n");
+
+        for (i=0; i<N; i++)
+                printf("%lf ", b[i]);
+}
 
 
 int main()
@@ -18,15 +50,13 @@ int main()
     double t_in = 0.0, t_gpu = 0.0, t_out = 0.0;
 
     /* === STAGE 1 & 2: Interleaved Setup & Prerequisite Regions === */
-    double a[N][N],b[N][N],c[N][N],d[N][N],e[N][N],f[N][N],result[N][N];
+    #pragma acc enter data create(a[0:N],b[0:N])
 
-    #pragma acc enter data create(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N],d[0:N][0:N],e[0:N][0:N],f[0:N][0:N],result[0:N][0:N])
-
-	//Array Initialization
+        init_array();
 
     /* === Transfer In (Host -> Device) === */
     clock_gettime(CLOCK_MONOTONIC, &t_start);
-    #pragma acc update device(a[0:N][0:N], b[0:N][0:N], c[0:N][0:N], d[0:N][0:N], e[0:N][0:N], f[0:N][0:N], result[0:N][0:N])
+    #pragma acc update device(a[0:N], b[0:N])
     #pragma acc wait
     clock_gettime(CLOCK_MONOTONIC, &t_end);
     t_in = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
@@ -35,20 +65,12 @@ int main()
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
         #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(a,b,c,d,e,f,result)
-	for(i=0;i<N;i++)
-	{
-		for(j=0;j<N;j++)
-		{
-			a[i][j]=(double)(0.1*i+j);	
-			b[i][j]=(double)(0.2*j+i);
-			c[i][j]=(double)(0.3*i+j);
-			d[i][j]=(double)(0.4*j+i);
-			e[i][j]=(double)(0.5*i+j);
-			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
-		}
-	}
+    #pragma acc parallel loop present(a[0:N],b[0:N])
+        for (i=0; i<N; i++)
+        {
+                a[i] = ((double)i)/N;
+                b[i] = ((double)i+1)/N;
+        }
     #pragma capc profitability_region end
 
     #pragma acc wait
@@ -57,7 +79,7 @@ int main()
 
     /* === Transfer Out (Device -> Host) === */
     clock_gettime(CLOCK_MONOTONIC, &t_start);
-    #pragma acc update self(a[0:N][0:N], b[0:N][0:N], c[0:N][0:N], d[0:N][0:N], e[0:N][0:N], f[0:N][0:N], result[0:N][0:N])
+    #pragma acc update self(a[0:N], b[0:N])
     #pragma acc wait
     clock_gettime(CLOCK_MONOTONIC, &t_end);
     t_out = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
