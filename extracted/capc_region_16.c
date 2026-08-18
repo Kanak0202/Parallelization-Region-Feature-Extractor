@@ -17,7 +17,7 @@ void basicsph(int i,int j,double wf[], double xij, double yij, double vxij, doub
 #define NY      50
 #define DY      1.0
 #define N       2558
-#define NB      50000
+#define NB      1000000000
 #define RHO0    1.1547
 #define MASSP   1.00 //Comes from consistency
 #define MASSB   1.00

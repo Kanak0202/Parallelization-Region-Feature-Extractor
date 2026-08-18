@@ -3,3 +3,6 @@ execution_sweep_temp/
 sweep.log
 features.csv
 features.csv.before_execution_times.bak
+capc_dataset_work_GBOMIa/
+dataset_logs/
+extracted/

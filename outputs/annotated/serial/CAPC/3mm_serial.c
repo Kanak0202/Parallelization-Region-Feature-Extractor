@@ -22,7 +22,7 @@ static void __capc_report(void){
 /* end CAPC timing support */
 
 
-#define N 5000
+#define N 10000
 
 int main()
 {

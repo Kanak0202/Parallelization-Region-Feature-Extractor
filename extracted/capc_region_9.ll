@@ -9,7 +9,7 @@ define dso_local void @capc_region_9(ptr noalias noundef writeonly captures(none
   br label %12
 
 12:                                               ; preds = %10, %80
-  %13 = phi i64 [ -47442, %10 ], [ %81, %80 ]
+  %13 = phi i64 [ -999997442, %10 ], [ %81, %80 ]
   %14 = getelementptr inbounds double, ptr %1, i64 %13
   %15 = getelementptr inbounds double, ptr %3, i64 %13
   %16 = getelementptr inbounds [5 x double], ptr %7, i64 %13
@@ -20,7 +20,7 @@ define dso_local void @capc_region_9(ptr noalias noundef writeonly captures(none
   br label %21
 
 21:                                               ; preds = %12, %77
-  %22 = phi i64 [ -47442, %12 ], [ %78, %77 ]
+  %22 = phi i64 [ -999997442, %12 ], [ %78, %77 ]
   %23 = icmp eq i64 %22, %13
   br i1 %23, label %77, label %24
 

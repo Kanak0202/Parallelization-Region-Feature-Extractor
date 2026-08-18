@@ -59,7 +59,7 @@ def parse_regions(source_file):
     """
     regions = []
     current_region = None
-    region_id = 1
+    region_id = 0
 
     with open(source_file, "r") as f:
         for line_num, line in enumerate(f, start=1):
@@ -681,7 +681,7 @@ def parse_c_file_for_isolated(file_path):
 
     parsed_regions = []
 
-    for idx, match in enumerate(region_matches, start=1):
+    for idx, match in enumerate(region_matches, start=0):
         begin_line = match.group(1).strip()
         body_code = match.group(2).strip()
         end_line = match.group(3).strip()
