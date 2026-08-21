@@ -8,20 +8,21 @@ define dso_local void @capc_region_0(ptr noalias noundef writeonly captures(none
   br label %3
 
 3:                                                ; preds = %2, %3
-  %4 = phi i64 [ 0, %2 ], [ %8, %3 ]
+  %4 = phi i64 [ 0, %2 ], [ %12, %3 ]
   %5 = trunc nuw nsw i64 %4 to i32
   %6 = uitofp nneg i32 %5 to double
   %7 = getelementptr inbounds nuw double, ptr %0, i64 %4
   store double %6, ptr %7, align 8, !tbaa !9
-  %8 = add nuw nsw i64 %4, 1
-  %9 = trunc nuw nsw i64 %8 to i32
+  %8 = trunc i64 %4 to i32
+  %9 = sub i32 10000000, %8
   %10 = uitofp nneg i32 %9 to double
   %11 = getelementptr inbounds nuw double, ptr %1, i64 %4
   store double %10, ptr %11, align 8, !tbaa !9
-  %12 = icmp eq i64 %8, 1000000000
-  br i1 %12, label %13, label %3, !llvm.loop !11
+  %12 = add nuw nsw i64 %4, 1
+  %13 = icmp eq i64 %12, 10000000
+  br i1 %13, label %14, label %3, !llvm.loop !11
 
-13:                                               ; preds = %3
+14:                                               ; preds = %3
   ret void
 }
 

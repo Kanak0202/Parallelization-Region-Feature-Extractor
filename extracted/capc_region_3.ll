@@ -13,11 +13,11 @@ define dso_local void @capc_region_3(ptr noalias noundef writeonly captures(none
   %7 = load double, ptr %6, align 8, !tbaa !9
   %8 = getelementptr inbounds nuw double, ptr %2, i64 %5
   %9 = load double, ptr %8, align 8, !tbaa !9
-  %10 = fmul contract double %7, %9
+  %10 = fadd contract double %7, %9
   %11 = getelementptr inbounds nuw double, ptr %0, i64 %5
   store double %10, ptr %11, align 8, !tbaa !9
   %12 = add nuw nsw i64 %5, 1
-  %13 = icmp eq i64 %12, 1000000000
+  %13 = icmp eq i64 %12, 9000000
   br i1 %13, label %14, label %4, !llvm.loop !11
 
 14:                                               ; preds = %4

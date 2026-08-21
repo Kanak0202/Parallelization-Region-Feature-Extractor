@@ -1,90 +1,86 @@
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 199309L
 #include <time.h>
-#include <omp.h>
-
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
-#include <unistd.h>
-#include <sys/time.h>
+#include <omp.h>
 
-#define N 49000000
-#define T 500
+/* ============================================================
+ * Original source support code (original main removed)
+ * ============================================================ */
+#include <stdio.h>
 
-double a[N];
-double b[N];
+#define N 10000000
 
-void init_array()
+double A[N];
+
+int main(void)
 {
-        int i, j;
-        #pragma capc profitability_region begin
-        #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
-        for (i=0; i<N; i++)
+    struct timespec __capc_t_start, __capc_t_end;
+    double __capc_t_init = 0.0;
+    double __capc_t_in = 0.0;
+    double __capc_t_gpu = 0.0;
+    double __capc_t_out = 0.0;
+
+    /* Target Region 1; original function: main() */
+    /* === Host-only input/setup replay (NOT timed) === */
+    int i;
+        double sum = 0.0;
+    
+    
+    
+        /* =========================================================
+           Region 1: Write-only
+           ========================================================= */
+
+    /* === GPU/OpenMP Runtime Initialization === */
+    int __capc_device = omp_get_default_device();
+    void *__capc_init_ptr = NULL;
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+    __capc_init_ptr = omp_target_alloc(1, __capc_device);
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_init = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
+    if (__capc_init_ptr != NULL) omp_target_free(__capc_init_ptr, __capc_device);
+
+    /* === Device allocation only (no data movement) === */
+    #pragma omp target enter data map(alloc:A[0:N])
+    #pragma omp taskwait
+
+    /* H2D skipped: target has no read-before/write input arrays. */
+
+    /* === Isolated Kernel Timing for Target Region 1 === */
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+
+    #pragma capc profitability_region begin
+    #pragma omp target teams distribute parallel for map(alloc:A[0:N])
+        for (i = 0; i < N; i++)
         {
-                a[i] = ((double)i)/N;
-                b[i] = ((double)i+1)/N;
-        }
-        #pragma capc profitability_region end
-}
-
-void print_array()
-{
-        int i, j;
-
-        for (i=0; i<N; i++)
-                printf("%lf ", a[i]);
-
-        printf("\n");
-
-        for (i=0; i<N; i++)
-                printf("%lf ", b[i]);
-}
-
-
-int main()
-{
-
-    int i, j, k, t;
-    struct timespec start_h2d, end_h2d, start_exec, end_exec, start_d2h, end_d2h;
-    double t_h2d = 0.0, t_exec = 0.0, t_d2h = 0.0;
-
-    /* === STAGE 1 & 2: Interleaved Setup & Prerequisite Regions === */
-    #pragma omp target enter data map(alloc:a[0:N],b[0:N])
-
-        init_array();
-
-    /* === STAGE 3a: Pre-timing H2D Copyin skipped (write-only or has prior dependencies) === */
-
-    /* === STAGE 3b: Isolated Execution for Target Region 1 === */
-    clock_gettime(CLOCK_MONOTONIC, &start_exec);
-
-        #pragma capc profitability_region begin
-    #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
-        for (i=0; i<N; i++)
-        {
-                a[i] = ((double)i)/N;
-                b[i] = ((double)i+1)/N;
+            A[i] = (double)i * 0.5;
         }
     #pragma capc profitability_region end
 
-    clock_gettime(CLOCK_MONOTONIC, &end_exec);
-    t_exec = (end_exec.tv_sec - start_exec.tv_sec) + (end_exec.tv_nsec - start_exec.tv_nsec) / 1e9;
+    #pragma omp taskwait
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_gpu = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
-    /* === STAGE 3c: Timed Device -> Host (D2H) Data Transfer === */
-    clock_gettime(CLOCK_MONOTONIC, &start_d2h);
-    #pragma omp target update from(a[0:N], b[0:N])
-    clock_gettime(CLOCK_MONOTONIC, &end_d2h);
-    t_d2h = (end_d2h.tv_sec - start_d2h.tv_sec) + (end_d2h.tv_nsec - start_d2h.tv_nsec) / 1e9;
+    /* === Required Transfer Out (Device -> Host) === */
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+    #pragma omp target update from(A[0:N])
+    #pragma omp taskwait
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_out = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
-    /* === STAGE 4: Performance Profile Breakdown === */
-    double t_transfer = t_h2d + t_d2h;
-    double t_total = t_exec + t_transfer;
-    printf("Region 1 Performance Breakdown:\n");
-    printf("  - H2D Transfer Time : %f seconds\n", t_h2d);
-    printf("  - Kernel Execution  : %f seconds\n", t_exec);
-    printf("  - D2H Transfer Time : %f seconds\n", t_d2h);
-    printf("  - Total Transfer    : %f seconds\n", t_transfer);
-    printf("  - Total Region Time : %f seconds\n\n", t_total);
+    double __capc_t_total = __capc_t_init + __capc_t_in + __capc_t_gpu + __capc_t_out;
+    printf("Region 1 Execution Breakdown:\n");
+    printf("  - GPU Initialization : %f seconds\n", __capc_t_init);
+    printf("  - Transfer In  (H2D): %f seconds\n", __capc_t_in);
+    printf("  - Kernel Time (GPU): %f seconds\n", __capc_t_gpu);
+    printf("  - Transfer Out (D2H): %f seconds\n", __capc_t_out);
+    printf("  - Isolated Region Time: %f seconds\n", __capc_t_total);
+
+    #pragma omp target exit data map(delete:A[0:N])
+    #pragma omp taskwait
+
+    /* Device cleanup is intentionally not part of isolated time. */
     return 0;
 }

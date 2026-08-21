@@ -4,23 +4,20 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 target triple = "x86_64-conda-linux-gnu"
 
 ; Function Attrs: nofree norecurse nosync nounwind memory(argmem: readwrite) uwtable
-define dso_local void @capc_region_2(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef readonly captures(none) %1, ptr noalias noundef readonly captures(none) %2) local_unnamed_addr #0 {
-  br label %4
+define dso_local void @capc_region_2(ptr noalias noundef captures(none) %0) local_unnamed_addr #0 {
+  br label %2
 
-4:                                                ; preds = %3, %4
-  %5 = phi i64 [ 0, %3 ], [ %12, %4 ]
-  %6 = getelementptr inbounds nuw double, ptr %1, i64 %5
-  %7 = load double, ptr %6, align 8, !tbaa !9
-  %8 = getelementptr inbounds nuw double, ptr %2, i64 %5
-  %9 = load double, ptr %8, align 8, !tbaa !9
-  %10 = fsub contract double %7, %9
-  %11 = getelementptr inbounds nuw double, ptr %0, i64 %5
-  store double %10, ptr %11, align 8, !tbaa !9
-  %12 = add nuw nsw i64 %5, 1
-  %13 = icmp eq i64 %12, 1000000000
-  br i1 %13, label %14, label %4, !llvm.loop !11
+2:                                                ; preds = %1, %2
+  %3 = phi i64 [ 0, %1 ], [ %7, %2 ]
+  %4 = getelementptr inbounds nuw double, ptr %0, i64 %3
+  %5 = load double, ptr %4, align 8, !tbaa !9
+  %6 = fadd contract double %5, 2.000000e+00
+  store double %6, ptr %4, align 8, !tbaa !9
+  %7 = add nuw nsw i64 %3, 1
+  %8 = icmp eq i64 %7, 9000000
+  br i1 %8, label %9, label %2, !llvm.loop !11
 
-14:                                               ; preds = %4
+9:                                                ; preds = %2
   ret void
 }
 

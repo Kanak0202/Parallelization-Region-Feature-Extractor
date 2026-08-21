@@ -1,1490 +1,512 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-annotate_acc_timing.py
+Combined CAPC OpenACC timing driver.
 
-Combined CAPC OpenACC timing profiler.
+Despite the historical filename requested by the workflow
+(`annotate_omp45_timing.py`), this script profiles OPENACC programs.
 
-For each:
-    #pragma capc profitability_region begin
-        ...
-    #pragma capc profitability_region end
+It combines:
+  1) resident + observed timing from the finalized OpenACC profiler
+  2) isolated timing from the finalized OpenACC standalone generator
 
-the script reports:
+Final per-region report:
+  Region | Lines | Invocations | Avg Res | Avg Obs | Isolated
+plus isolated component breakdown (init/H2D/kernel/D2H).
 
-    Resident Time
-        GPU kernel execution time in the original OpenACC program.
+Timing semantics
+----------------
+Resident:
+    average kernel-only time when data/runtime are already resident.
 
-    Observed Time
-        Resident Time + explicit OpenACC data-transfer time observed in
-        the original program (enter data / exit data / update).
+Observed:
+    cold/first-invocation observed cost in the original execution context:
+        full one-time GPU initialization
+      + full one-time transfer/setup cost
+      + average recurring transfer/kernel cost per invocation
+    One-time initialization is intentionally NOT divided by invocation count.
 
-    Isolated Time
-        Transfer In + Kernel + Transfer Out measured by executing a
-        generated standalone version of the target profitability region.
+Isolated:
+    standalone cold-region cost:
+        GPU initialization + required H2D + kernel + required D2H
 
-Usage:
-    python annotate_acc_timing.py program_acc.c
-
-Optional:
-    python annotate_acc_timing.py program_acc.c --gpu cc70
-    python annotate_acc_timing.py program_acc.c --keep-generated
-    python annotate_acc_timing.py program_acc.c --isolated-runs 3
+The two embedded engines below are exact copies of the finalized OpenACC
+scripts used by the workflow; they are executed in private namespaces so this
+file remains completely self-contained.
 """
 
+import argparse
+import csv
 import os
 import re
-import sys
 import shutil
-import argparse
-import tempfile
 import subprocess
-import resource
-from pathlib import Path
+import sys
+import tempfile
 
+PROFILER_SOURCE = '#!/usr/bin/env python3\n\nimport os\nimport sys\nimport re\nimport subprocess\nimport argparse\nimport tempfile\nimport resource\nfrom collections import defaultdict\n\n\n# =============================================================================\n# Runtime setup\n# =============================================================================\n\ntry:\n    resource.setrlimit(\n        resource.RLIMIT_STACK,\n        (resource.RLIM_INFINITY, resource.RLIM_INFINITY),\n    )\nexcept Exception:\n    pass\n\n\n# =============================================================================\n# CAPC region parsing\n# =============================================================================\n\ndef parse_regions(source_file):\n    regions = []\n    current_region = None\n    region_id = 1\n\n    with open(source_file, "r") as f:\n        for line_num, line in enumerate(f, start=1):\n            stripped = line.strip()\n\n            if "#pragma capc profitability_region begin" in stripped:\n                current_region = {\n                    "id": region_id,\n                    "begin_line": line_num,\n                    "end_line": None,\n                    "count": 0,\n                    "resident_time": 0.0,\n                    "init_time": 0.0,\n                    "one_time_transfer_time": 0.0,\n                    "recurring_transfer_time": 0.0,\n\n                    # key = (source line, event tag)\n                    # A tag is essential when H2D and D2H originate from the\n                    # same compute pragma; otherwise two one-time events on one\n                    # line can be mistaken for one recurring event.\n                    "_transfer_events": defaultdict(list),\n                }\n\n            elif (\n                "#pragma capc profitability_region end" in stripped\n                and current_region\n            ):\n                current_region["end_line"] = line_num\n                regions.append(current_region)\n                region_id += 1\n                current_region = None\n\n    return regions\n\n\ndef get_associated_region_id(line_num, regions):\n    """\n    Attribute non-CAPC OpenACC operations to the nearest logical region using\n    the same policy used by the validated profiler:\n\n      * inside a region      -> that region\n      * before first region  -> Region 1\n      * between regions      -> preceding region\n      * after final region   -> final region\n    """\n    if not regions:\n        return 1\n\n    for reg in regions:\n        if reg["begin_line"] <= line_num <= reg["end_line"]:\n            return reg["id"]\n\n    if line_num < regions[0]["begin_line"]:\n        return regions[0]["id"]\n\n    for idx in range(len(regions) - 1):\n        if (\n            regions[idx]["end_line"]\n            < line_num\n            < regions[idx + 1]["begin_line"]\n        ):\n            return regions[idx]["id"]\n\n    return regions[-1]["id"]\n\n\n# =============================================================================\n# Generic C/OpenACC parsing helpers\n# =============================================================================\n\ndef consume_statement(lines, idx):\n    """\n    Consume the complete C statement/block controlled by an OpenACC compute\n    pragma. This supports:\n        pragma + for\n        pragma + nested for\n        pragma + compound block\n        pragma + another pragma + for\n    """\n    n = len(lines)\n\n    while idx < n:\n        stripped = lines[idx].strip()\n\n        if (\n            not stripped\n            or stripped.startswith("//")\n            or stripped.startswith("/*")\n        ):\n            idx += 1\n            continue\n\n        if stripped.startswith("#pragma"):\n            idx += 1\n            continue\n\n        if "{" in stripped:\n            depth = 0\n\n            while idx < n:\n                line = lines[idx]\n                depth += line.count("{") - line.count("}")\n                idx += 1\n\n                if depth <= 0:\n                    break\n\n            return idx\n\n        if any(\n            stripped.startswith(keyword)\n            for keyword in ("for", "while", "if", "do")\n        ):\n            idx += 1\n            return consume_statement(lines, idx)\n\n        idx += 1\n\n        while idx < n and ";" not in stripped:\n            stripped = lines[idx].strip()\n            idx += 1\n\n        return idx\n\n    return idx\n\n\ndef consume_acc_pragma(lines, start_idx):\n    """\n    Consume one logical OpenACC pragma, including all backslash-continuation\n    lines.\n\n    Returns:\n        logical_pragma : normalized one-line pragma, with \'\\\' removed\n        next_idx       : first physical line after the pragma\n        physical_lines : original physical pragma lines\n    """\n    physical = [lines[start_idx]]\n    idx = start_idx + 1\n\n    while physical[-1].rstrip().endswith("\\\\") and idx < len(lines):\n        physical.append(lines[idx])\n        idx += 1\n\n    pieces = []\n\n    for line in physical:\n        part = line.rstrip("\\n").rstrip()\n\n        if part.endswith("\\\\"):\n            part = part[:-1].rstrip()\n\n        pieces.append(part.strip())\n\n    logical = " ".join(piece for piece in pieces if piece)\n    logical = re.sub(r"\\s+", " ", logical).strip()\n\n    return logical, idx, physical\n\n\ndef find_parenthesized_span(text, open_pos):\n    """\n    Given text[open_pos] == \'(\', return the index immediately after the\n    matching \')\'.\n    """\n    depth = 0\n\n    for pos in range(open_pos, len(text)):\n        if text[pos] == "(":\n            depth += 1\n        elif text[pos] == ")":\n            depth -= 1\n\n            if depth == 0:\n                return pos + 1\n\n    raise ValueError(\n        "Unmatched parenthesis while parsing OpenACC pragma"\n    )\n\n\ndef split_top_level_commas(text):\n    items = []\n    current = []\n    square_depth = 0\n    paren_depth = 0\n    brace_depth = 0\n\n    for ch in text:\n        if ch == "[":\n            square_depth += 1\n        elif ch == "]":\n            square_depth = max(0, square_depth - 1)\n        elif ch == "(":\n            paren_depth += 1\n        elif ch == ")":\n            paren_depth = max(0, paren_depth - 1)\n        elif ch == "{":\n            brace_depth += 1\n        elif ch == "}":\n            brace_depth = max(0, brace_depth - 1)\n\n        if (\n            ch == ","\n            and square_depth == 0\n            and paren_depth == 0\n            and brace_depth == 0\n        ):\n            item = "".join(current).strip()\n\n            if item:\n                items.append(item)\n\n            current = []\n        else:\n            current.append(ch)\n\n    final = "".join(current).strip()\n\n    if final:\n        items.append(final)\n\n    return items\n\n\ndef unique_preserve_order(items):\n    seen = set()\n    result = []\n\n    for item in items:\n        normalized = re.sub(r"\\s+", "", item)\n\n        if normalized not in seen:\n            seen.add(normalized)\n            result.append(item.strip())\n\n    return result\n\n\n\ndef mask_comments_and_strings(code):\n    """Replace comments and string/character literals with spaces."""\n    out = []\n    i = 0\n    n = len(code)\n    state = "code"\n\n    while i < n:\n        ch = code[i]\n        nxt = code[i + 1] if i + 1 < n else ""\n\n        if state == "code":\n            if ch == "/" and nxt == "/":\n                out.extend("  ")\n                i += 2\n                state = "line_comment"\n            elif ch == "/" and nxt == "*":\n                out.extend("  ")\n                i += 2\n                state = "block_comment"\n            elif ch == \'"\':\n                out.append(" ")\n                i += 1\n                state = "string"\n            elif ch == "\'":\n                out.append(" ")\n                i += 1\n                state = "char"\n            else:\n                out.append(ch)\n                i += 1\n\n        elif state == "line_comment":\n            if ch == "\\n":\n                out.append("\\n")\n                state = "code"\n            else:\n                out.append(" ")\n            i += 1\n\n        elif state == "block_comment":\n            if ch == "*" and nxt == "/":\n                out.extend("  ")\n                i += 2\n                state = "code"\n            else:\n                out.append("\\n" if ch == "\\n" else " ")\n                i += 1\n\n        elif state in ("string", "char"):\n            quote = \'"\' if state == "string" else "\'"\n            if ch == "\\\\" and i + 1 < n:\n                out.extend("  ")\n                i += 2\n            elif ch == quote:\n                out.append(" ")\n                i += 1\n                state = "code"\n            else:\n                out.append("\\n" if ch == "\\n" else " ")\n                i += 1\n\n    return "".join(out)\n\n\ndef get_declared_array_bounds_map(full_code):\n    """\n    Infer full OpenACC sections from ordinary C array declarations.\n\n    Example:\n        double a[2000][2000];\n    becomes:\n        a -> a[0:2000][0:2000]\n    """\n    code = mask_comments_and_strings(full_code)\n    result = {}\n\n    type_re = (\n        r"(?:static\\s+|extern\\s+|const\\s+|volatile\\s+|register\\s+|"\n        r"restrict\\s+|_Alignas\\s*\\([^)]*\\)\\s+)*"\n        r"(?:(?:unsigned|signed)\\s+)?"\n        r"(?:(?:long\\s+long|long|short)\\s+)?"\n        r"(?:double|float|int|char|size_t|ptrdiff_t|_Bool)\\b"\n    )\n\n    for m in re.finditer(rf"(?m)^[ \\t]*{type_re}([^;]*);", code):\n        declarators = m.group(1)\n        for am in re.finditer(\n            r"\\b([A-Za-z_][A-Za-z0-9_]*)\\s*"\n            r"((?:\\[[^\\]]+\\]\\s*)+)",\n            declarators,\n        ):\n            name = am.group(1)\n            dims = re.findall(r"\\[\\s*([^\\]]+)\\s*\\]", am.group(2))\n            if not dims:\n                continue\n\n            spec = name\n            valid = True\n            for dim in dims:\n                dim = dim.strip()\n                if not dim:\n                    valid = False\n                    break\n                spec += f"[0:{dim}]"\n\n            if valid and name not in result:\n                result[name] = spec\n\n    return result\n\n\ndef spec_var_name(spec):\n    m = re.match(r"\\s*([A-Za-z_][A-Za-z0-9_]*)", spec)\n    return m.group(1) if m else None\n\n\ndef infer_used_array_specs(statement_text, declaration_bounds):\n    """Return declared arrays actually indexed by one target statement/body."""\n    code = mask_comments_and_strings(statement_text)\n    names = []\n    for name in declaration_bounds:\n        if re.search(r"\\b" + re.escape(name) + r"\\s*\\[", code):\n            names.append(name)\n    return [declaration_bounds[n] for n in names], names\n\n\ndef classify_array_accesses(statement_text, array_names):\n    """Classify arrays as read-before/write inputs and modified outputs."""\n    code = mask_comments_and_strings(statement_text)\n    reads = []\n    writes = []\n\n    for var in array_names:\n        saw_read = False\n        saw_write = False\n        pat = re.compile(r"\\b" + re.escape(var) + r"\\s*(?:\\[[^\\]]*\\]\\s*)+")\n\n        for m in pat.finditer(code):\n            before = code[max(0, m.start() - 4):m.start()]\n            after = code[m.end():m.end() + 10]\n\n            if re.search(r"(?:\\+\\+|--)\\s*$", before) or re.match(r"\\s*(?:\\+\\+|--)", after):\n                saw_read = True\n                saw_write = True\n                continue\n\n            op = re.match(r"\\s*(<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|=)", after)\n            if op:\n                saw_write = True\n                if op.group(1) != "=":\n                    saw_read = True\n            else:\n                saw_read = True\n\n        if saw_read:\n            reads.append(var)\n        if saw_write:\n            writes.append(var)\n\n    return reads, writes\n\n\n# =============================================================================\n# OpenACC clause parsing / rewriting\n# =============================================================================\n\n# Data clauses which can appear on OpenACC compute constructs.\n# Synonyms are included because older code may use pcopy* forms.\nACC_DATA_CLAUSES = (\n    "present_or_copyin",\n    "present_or_copyout",\n    "present_or_copy",\n    "present_or_create",\n    "pcopyin",\n    "pcopyout",\n    "pcopy",\n    "copyin",\n    "copyout",\n    "create",\n    "present",\n    "copy",\n    "deviceptr",\n)\n\nACC_CLAUSE_RE = re.compile(\n    r"\\b("\n    + "|".join(\n        sorted(\n            (re.escape(x) for x in ACC_DATA_CLAUSES),\n            key=len,\n            reverse=True,\n        )\n    )\n    + r")\\s*\\(",\n    re.IGNORECASE,\n)\n\n\ndef parse_acc_data_clauses(logical_pragma):\n    """\n    Parse OpenACC data clauses from one logical pragma.\n\n    Returns entries:\n        {\n            "type": clause name,\n            "items": [array/scalar specs],\n            "start": clause start,\n            "end": first char after matching \')\'\n        }\n    """\n    clauses = []\n    pos = 0\n\n    while True:\n        match = ACC_CLAUSE_RE.search(logical_pragma, pos)\n\n        if not match:\n            break\n\n        clause_type = match.group(1).lower()\n        open_paren = logical_pragma.find(\n            "(",\n            match.start(),\n            match.end(),\n        )\n\n        end = find_parenthesized_span(\n            logical_pragma,\n            open_paren,\n        )\n\n        payload = logical_pragma[\n            open_paren + 1:end - 1\n        ].strip()\n\n        clauses.append(\n            {\n                "type": clause_type,\n                "items": split_top_level_commas(payload),\n                "start": match.start(),\n                "end": end,\n            }\n        )\n\n        pos = end\n\n    return clauses\n\n\n\ndef acc_clause_kind_by_var(logical_pragma):\n    result = {}\n    for clause in parse_acc_data_clauses(logical_pragma):\n        for item in clause[\'items\']:\n            name = spec_var_name(item)\n            if name:\n                result[name] = clause[\'type\']\n    return result\n\n\ndef extract_data_directive_var_names(logical_pragma):\n    """Extract variable names from OpenACC data-management clauses."""\n    names = []\n    clause_re = re.compile(\n        r\'\\b(?:create|copyin|copyout|copy|present|pcopy|pcopyin|pcopyout|\'\n        r\'present_or_copy|present_or_copyin|present_or_copyout|\'\n        r\'present_or_create|deviceptr|delete)\\s*\\(\',\n        re.IGNORECASE,\n    )\n    pos = 0\n    while True:\n        m = clause_re.search(logical_pragma, pos)\n        if not m:\n            break\n        open_pos = logical_pragma.find(\'(\', m.start(), m.end())\n        end = find_parenthesized_span(logical_pragma, open_pos)\n        payload = logical_pragma[open_pos + 1:end - 1]\n        for item in split_top_level_commas(payload):\n            name = spec_var_name(item)\n            if name and name not in names:\n                names.append(name)\n        pos = end\n    return names\n\n\ndef transfer_sets_from_acc_compute(logical_pragma):\n    """\n    Convert explicit compute-region data clauses to isolated transfer sets.\n\n    Semantics used:\n      copyin / pcopyin / present_or_copyin\n            -> H2D\n\n      copyout / pcopyout / present_or_copyout\n            -> D2H\n\n      copy / pcopy / present_or_copy\n            -> H2D + D2H\n\n      create / present / present_or_create / deviceptr\n            -> no explicit transfer generated by this profiler\n\n    Returns:\n        h2d_specs, d2h_specs, all_managed_specs, has_transfer_clauses\n    """\n    h2d = []\n    d2h = []\n    managed = []\n    has_transfer_clauses = False\n\n    for clause in parse_acc_data_clauses(logical_pragma):\n        kind = clause["type"]\n        items = clause["items"]\n\n        # deviceptr variables are already device pointers and must not be\n        # allocated with `enter data create`.\n        if kind != "deviceptr":\n            managed.extend(items)\n\n        if kind in {\n            "copyin",\n            "pcopyin",\n            "present_or_copyin",\n        }:\n            h2d.extend(items)\n            has_transfer_clauses = True\n\n        elif kind in {\n            "copyout",\n            "pcopyout",\n            "present_or_copyout",\n        }:\n            d2h.extend(items)\n            has_transfer_clauses = True\n\n        elif kind in {\n            "copy",\n            "pcopy",\n            "present_or_copy",\n        }:\n            h2d.extend(items)\n            d2h.extend(items)\n            has_transfer_clauses = True\n\n    return (\n        unique_preserve_order(h2d),\n        unique_preserve_order(d2h),\n        unique_preserve_order(managed),\n        has_transfer_clauses,\n    )\n\n\ndef remove_acc_data_clauses(logical_pragma):\n    clauses = parse_acc_data_clauses(logical_pragma)\n\n    if not clauses:\n        return logical_pragma\n\n    pieces = []\n    last = 0\n\n    for clause in clauses:\n        pieces.append(\n            logical_pragma[last:clause["start"]]\n        )\n        last = clause["end"]\n\n    pieces.append(logical_pragma[last:])\n\n    cleaned = "".join(pieces)\n    cleaned = re.sub(r"\\s+", " ", cleaned).strip()\n\n    return cleaned\n\n\ndef rewrite_acc_compute_as_present(logical_pragma, managed_specs):\n    """\n    Remove compute-region copy/copyin/copyout/create/present/etc. clauses and\n    append one `present(...)` clause for variables explicitly managed by the\n    profiler.\n\n    This prevents hidden data movement inside the resident kernel timer.\n    """\n    base = remove_acc_data_clauses(logical_pragma)\n\n    if managed_specs:\n        base += (\n            " present("\n            + ", ".join(managed_specs)\n            + ")"\n        )\n\n    return re.sub(r"\\s+", " ", base).strip()\n\n\ndef is_acc_compute_directive(logical_pragma):\n    lower = logical_pragma.lower()\n\n    return bool(\n        re.search(\n            r"#\\s*pragma\\s+acc\\s+"\n            r"(parallel|kernels|serial)\\b",\n            lower,\n        )\n    )\n\n\ndef is_acc_explicit_data_directive(logical_pragma):\n    lower = logical_pragma.lower()\n\n    return bool(\n        re.search(\n            r"#\\s*pragma\\s+acc\\s+"\n            r"(enter\\s+data|exit\\s+data|update)\\b",\n            lower,\n        )\n    )\n\n\ndef is_acc_cleanup_only_exit(logical_pragma):\n    lower = logical_pragma.lower()\n\n    if not re.search(\n        r"#\\s*pragma\\s+acc\\s+exit\\s+data\\b",\n        lower,\n    ):\n        return False\n\n    # `delete(...)` is cleanup only. `copyout(...)` moves data and is timed.\n    has_delete = bool(\n        re.search(r"\\bdelete\\s*\\(", lower)\n    )\n    has_copyout = bool(\n        re.search(\n            r"\\b(?:copyout|pcopyout|present_or_copyout)"\n            r"\\s*\\(",\n            lower,\n        )\n    )\n\n    return has_delete and not has_copyout\n\n\ndef source_has_explicit_acc_init(lines):\n    """\n    Detect user-written acc_init(). Comment-only occurrences are ignored.\n    """\n    in_block_comment = False\n\n    for line in lines:\n        text = line\n\n        if in_block_comment:\n            end = text.find("*/")\n\n            if end < 0:\n                continue\n\n            text = text[end + 2:]\n            in_block_comment = False\n\n        while "/*" in text:\n            start = text.find("/*")\n            end = text.find("*/", start + 2)\n\n            if end < 0:\n                text = text[:start]\n                in_block_comment = True\n                break\n\n            text = text[:start] + text[end + 2:]\n\n        text = text.split("//", 1)[0]\n\n        if re.search(r"\\bacc_init\\s*\\(", text):\n            return True\n\n    return False\n\n\n# =============================================================================\n# Source instrumentation\n# =============================================================================\n\ndef instrument_openacc_source(\n    source_path,\n    temp_path,\n    regions,\n):\n    with open(source_path, "r") as f:\n        lines = f.readlines()\n\n    full_source = "".join(lines)\n    declaration_bounds = get_declared_array_bounds_map(full_source)\n    active_persistent = set()\n\n    explicit_acc_init = source_has_explicit_acc_init(\n        lines\n    )\n\n    instrumented = [\n        "#include <omp.h>\\n",\n        "#include <stdio.h>\\n",\n        "#include <openacc.h>\\n\\n",\n\n        "static double _capc_dt0, _capc_dt1;\\n",\n        "static double _capc_k0, _capc_k1;\\n",\n        "static double _capc_init0, _capc_init1;\\n",\n        "static int _capc_gpu_initialized = 0;\\n\\n",\n    ]\n\n    if not explicit_acc_init:\n        instrumented.extend(\n            [\n                "static void _capc_ensure_gpu_init("\n                "int region_id, int line_num)\\n",\n                "{\\n",\n                "    if (!_capc_gpu_initialized) {\\n",\n                "        _capc_init0 = omp_get_wtime();\\n",\n                "        acc_init(acc_device_nvidia);\\n",\n                "        _capc_init1 = omp_get_wtime();\\n",\n                "        _capc_gpu_initialized = 1;\\n",\n                \'        printf("[PROFILER] init \'\n                \'region:%d line:%d | GPU Initialization Time \'\n                \'= %.9f s\\\\n",\\n\',\n                "               region_id, line_num, "\n                "_capc_init1 - _capc_init0);\\n",\n                "    }\\n",\n                "}\\n\\n",\n            ]\n        )\n\n    i = 0\n    n = len(lines)\n\n    while i < n:\n        line = lines[i]\n        stripped = line.strip()\n        line_num = i + 1\n\n        # ---------------------------------------------------------------------\n        # User-written explicit acc_init()\n        # ---------------------------------------------------------------------\n        if (\n            explicit_acc_init\n            and re.search(r"\\bacc_init\\s*\\(", stripped)\n            and not stripped.startswith("//")\n        ):\n            reg_id = get_associated_region_id(\n                line_num,\n                regions,\n            )\n\n            instrumented.append(\n                "  _capc_init0 = omp_get_wtime();\\n"\n            )\n            instrumented.append(line)\n            instrumented.append(\n                "  _capc_init1 = omp_get_wtime();\\n"\n            )\n            instrumented.append(\n                "  _capc_gpu_initialized = 1;\\n"\n            )\n            instrumented.append(\n                f\'  printf("[PROFILER] init \'\n                f\'region:{reg_id} line:{line_num} | \'\n                f\'GPU Initialization Time = %.9f s\\\\n", \'\n                f\'_capc_init1 - _capc_init0);\\n\'\n            )\n\n            i += 1\n            continue\n\n        # ---------------------------------------------------------------------\n        # OpenACC pragmas: consume the complete logical directive first.\n        # ---------------------------------------------------------------------\n        if re.match(\n            r"^\\s*#\\s*pragma\\s+acc\\b",\n            line,\n            flags=re.IGNORECASE,\n        ):\n            logical, next_idx, physical = consume_acc_pragma(\n                lines,\n                i,\n            )\n\n            reg_id = get_associated_region_id(\n                line_num,\n                regions,\n            )\n\n            # -----------------------------------------------------------------\n            # enter data / exit data / update\n            # -----------------------------------------------------------------\n            if is_acc_explicit_data_directive(logical):\n                lower_logical = logical.lower()\n                directive_vars = extract_data_directive_var_names(logical)\n                is_enter = bool(re.search(r\'#\\s*pragma\\s+acc\\s+enter\\s+data\\b\', lower_logical))\n                is_exit = bool(re.search(r\'#\\s*pragma\\s+acc\\s+exit\\s+data\\b\', lower_logical))\n\n                if is_acc_cleanup_only_exit(logical):\n                    instrumented.extend(physical)\n                    if is_exit:\n                        for name in directive_vars:\n                            active_persistent.discard(name)\n                    i = next_idx\n                    continue\n\n                if not explicit_acc_init:\n                    instrumented.append(\n                        f"  _capc_ensure_gpu_init("\n                        f"{reg_id}, {line_num});\\n"\n                    )\n\n                instrumented.append("  _capc_dt0 = omp_get_wtime();\\n")\n                instrumented.extend(physical)\n                instrumented.append("  #pragma acc wait\\n")\n                instrumented.append("  _capc_dt1 = omp_get_wtime();\\n")\n                instrumented.append(\n                    f\'  printf("[PROFILER] transfer \'\n                    f\'region:{reg_id} line:{line_num} \'\n                    f\'tag:data | Transfer Time = %.9f s\\\\n", \'\n                    f\'_capc_dt1 - _capc_dt0);\\n\'\n                )\n\n                if is_enter:\n                    active_persistent.update(directive_vars)\n                elif is_exit:\n                    for name in directive_vars:\n                        active_persistent.discard(name)\n\n                i = next_idx\n                continue\n\n            # -----------------------------------------------------------------\n            # parallel / kernels / serial compute construct\n            # -----------------------------------------------------------------\n            if is_acc_compute_directive(logical):\n                # First find the complete compute statement/body so array use can\n                # be inferred even when the pragma has no data clauses.\n                end_idx = consume_statement(lines, next_idx)\n                statement_text = "".join(lines[next_idx:end_idx])\n\n                (\n                    explicit_h2d,\n                    explicit_d2h,\n                    explicit_managed,\n                    has_transfer_clauses,\n                ) = transfer_sets_from_acc_compute(logical)\n\n                clause_kinds = acc_clause_kind_by_var(logical)\n                explicit_vars = set(clause_kinds)\n\n                inferred_specs, inferred_names = infer_used_array_specs(\n                    statement_text,\n                    declaration_bounds,\n                )\n                read_names, write_names = classify_array_accesses(\n                    statement_text,\n                    inferred_names,\n                )\n\n                # Arrays referenced in the body but neither covered by an\n                # explicit compute data clause nor already living in a\n                # persistent enter-data environment use implicit OpenACC data\n                # semantics.  Split those implicit copies from the kernel timer.\n                implicit_names = [\n                    name for name in inferred_names\n                    if name not in explicit_vars and name not in active_persistent\n                ]\n\n                inferred_by_name = {\n                    name: declaration_bounds[name]\n                    for name in inferred_names\n                }\n\n                implicit_h2d = [\n                    inferred_by_name[name]\n                    for name in implicit_names\n                    if name in read_names\n                ]\n                implicit_d2h = [\n                    inferred_by_name[name]\n                    for name in implicit_names\n                    if name in write_names\n                ]\n\n                h2d_specs = unique_preserve_order(explicit_h2d + implicit_h2d)\n                d2h_specs = unique_preserve_order(explicit_d2h + implicit_d2h)\n\n                # Merge pragma-discovered and declaration/body-discovered arrays\n                # for the resident present(...) kernel.\n                all_managed_specs = unique_preserve_order(\n                    explicit_managed + inferred_specs\n                )\n\n                allocation_clause_present = any(\n                    kind in {\n                        \'create\', \'present_or_create\',\n                        \'copy\', \'copyin\', \'copyout\',\n                        \'pcopy\', \'pcopyin\', \'pcopyout\',\n                        \'present_or_copy\', \'present_or_copyin\',\n                        \'present_or_copyout\',\n                    }\n                    for kind in clause_kinds.values()\n                )\n\n                needs_split = bool(\n                    has_transfer_clauses\n                    or allocation_clause_present\n                    or implicit_names\n                )\n\n                if not explicit_acc_init:\n                    instrumented.append(\n                        f"  _capc_ensure_gpu_init("\n                        f"{reg_id}, {line_num});\\n"\n                    )\n\n                if needs_split:\n                    # Create temporary mappings only for variables that are not\n                    # already persistent and are not explicit present/deviceptr\n                    # requirements.\n                    create_specs = []\n                    for spec in all_managed_specs:\n                        name = spec_var_name(spec)\n                        if not name or name in active_persistent:\n                            continue\n                        kind = clause_kinds.get(name)\n                        if kind in {\'present\', \'deviceptr\'}:\n                            continue\n                        create_specs.append(spec)\n                    create_specs = unique_preserve_order(create_specs)\n\n                    if create_specs:\n                        instrumented.append(\n                            "  #pragma acc enter data create("\n                            + ", ".join(create_specs)\n                            + ")\\n"\n                        )\n                        instrumented.append("  #pragma acc wait\\n")\n\n                    if h2d_specs:\n                        instrumented.append("  _capc_dt0 = omp_get_wtime();\\n")\n                        instrumented.append(\n                            "  #pragma acc update device("\n                            + ", ".join(h2d_specs)\n                            + ")\\n"\n                        )\n                        instrumented.append("  #pragma acc wait\\n")\n                        instrumented.append("  _capc_dt1 = omp_get_wtime();\\n")\n                        instrumented.append(\n                            f\'  printf("[PROFILER] transfer \'\n                            f\'region:{reg_id} line:{line_num} \'\n                            f\'tag:implicit_in | Transfer Time = %.9f s\\\\n", \'\n                            f\'_capc_dt1 - _capc_dt0);\\n\'\n                        )\n\n                    resident_pragma = rewrite_acc_compute_as_present(\n                        logical,\n                        all_managed_specs,\n                    )\n\n                    instrumented.append("  _capc_k0 = omp_get_wtime();\\n")\n                    instrumented.append("  " + resident_pragma + "\\n")\n                    i = next_idx\n                    while i < end_idx:\n                        instrumented.append(lines[i])\n                        i += 1\n                    instrumented.append("  #pragma acc wait\\n")\n                    instrumented.append("  _capc_k1 = omp_get_wtime();\\n")\n                    instrumented.append(\n                        f\'  printf("[PROFILER] kernel \'\n                        f\'region:{reg_id} line:{line_num} | \'\n                        f\'Kernel Execution Time = %.9f s\\\\n", \'\n                        f\'_capc_k1 - _capc_k0);\\n\'\n                    )\n\n                    if d2h_specs:\n                        instrumented.append("  _capc_dt0 = omp_get_wtime();\\n")\n                        instrumented.append(\n                            "  #pragma acc update self("\n                            + ", ".join(d2h_specs)\n                            + ")\\n"\n                        )\n                        instrumented.append("  #pragma acc wait\\n")\n                        instrumented.append("  _capc_dt1 = omp_get_wtime();\\n")\n                        instrumented.append(\n                            f\'  printf("[PROFILER] transfer \'\n                            f\'region:{reg_id} line:{line_num} \'\n                            f\'tag:implicit_out | Transfer Time = %.9f s\\\\n", \'\n                            f\'_capc_dt1 - _capc_dt0);\\n\'\n                        )\n\n                    if create_specs:\n                        instrumented.append(\n                            "  #pragma acc exit data delete("\n                            + ", ".join(create_specs)\n                            + ")\\n"\n                        )\n                        instrumented.append("  #pragma acc wait\\n")\n\n                    continue\n\n                # No implicit/explicit allocation or transfer needs to be split.\n                # This is the normal persistent/present resident case.\n                instrumented.append("  _capc_k0 = omp_get_wtime();\\n")\n                if inferred_specs and not any(\n                    kind == "deviceptr" for kind in clause_kinds.values()\n                ):\n                    resident_pragma = rewrite_acc_compute_as_present(\n                        logical, all_managed_specs\n                    )\n                    instrumented.append("  " + resident_pragma + "\\n")\n                else:\n                    instrumented.extend(physical)\n                i = next_idx\n                while i < end_idx:\n                    instrumented.append(lines[i])\n                    i += 1\n                instrumented.append("  #pragma acc wait\\n")\n                instrumented.append("  _capc_k1 = omp_get_wtime();\\n")\n                instrumented.append(\n                    f\'  printf("[PROFILER] kernel \'\n                    f\'region:{reg_id} line:{line_num} | \'\n                    f\'Kernel Execution Time = %.9f s\\\\n", \'\n                    f\'_capc_k1 - _capc_k0);\\n\'\n                )\n                continue\n\n        # Ordinary source line.\n        instrumented.append(line)\n        i += 1\n\n    with open(temp_path, "w") as f:\n        f.writelines(instrumented)\n\n\n# =============================================================================\n# Compile / execute\n# =============================================================================\n\ndef compile_openacc_program(\n    source_file,\n    exec_name,\n    gpu_arch="cc70",\n):\n    compile_cmd = [\n        "nvc",\n        "-acc",\n        "-mp",\n        f"-gpu={gpu_arch}",\n        "-Minfo=accel",\n        source_file,\n        "-o",\n        exec_name,\n    ]\n\n    print(\n        f"[*] Compiling OpenACC program: "\n        f"{\' \'.join(compile_cmd)}"\n    )\n\n    result = subprocess.run(\n        compile_cmd,\n        capture_output=True,\n        text=True,\n    )\n\n    if result.returncode != 0:\n        print(\n            f"[-] Compilation failed for "\n            f"\'{source_file}\':\\n{result.stderr}"\n        )\n        sys.exit(1)\n\n\ndef run_executable(exec_path, timeout=300):\n    print(\n        f"[*] Executing target OpenACC binary: "\n        f"{exec_path}\\n"\n    )\n\n    try:\n        result = subprocess.run(\n            [exec_path],\n            capture_output=True,\n            text=True,\n            timeout=timeout,\n        )\n    except subprocess.TimeoutExpired as exc:\n        stdout = exc.stdout or ""\n        stderr = exc.stderr or ""\n\n        if isinstance(stdout, bytes):\n            stdout = stdout.decode(\n                errors="replace"\n            )\n\n        if isinstance(stderr, bytes):\n            stderr = stderr.decode(\n                errors="replace"\n            )\n\n        print(\n            f"[!] Execution timed out after "\n            f"{timeout} seconds."\n        )\n\n        return stdout, stderr, 124\n\n    return (\n        result.stdout,\n        result.stderr,\n        result.returncode,\n    )\n\n\n# =============================================================================\n# Runtime log processing\n# =============================================================================\n\ndef process_profiler_output(\n    stdout_str,\n    stderr_str,\n    returncode,\n    regions,\n):\n    combined_log = stdout_str + "\\n" + stderr_str\n\n    pattern = re.compile(\n        r"\\[PROFILER\\]\\s+"\n        r"(kernel|transfer|init)\\s+"\n        r"region:(\\d+)\\s+"\n        r"line:(\\d+)"\n        r"(?:\\s+tag:([A-Za-z0-9_]+))?"\n        r"\\s+\\|\\s+"\n        r"(.*?)\\s+=\\s+"\n        r"([\\d\\.]+)\\s+s"\n    )\n\n    matched_events = 0\n    region_map = {\n        reg["id"]: reg\n        for reg in regions\n    }\n\n    for line in combined_log.splitlines():\n        match = pattern.search(line)\n\n        if not match:\n            continue\n\n        matched_events += 1\n\n        event_cat = match.group(1)\n        reg_id = int(match.group(2))\n        line_num = int(match.group(3))\n        tag = match.group(4) or event_cat\n        duration = float(match.group(6))\n\n        if reg_id not in region_map:\n            continue\n\n        reg = region_map[reg_id]\n\n        if event_cat == "kernel":\n            reg["resident_time"] += duration\n            reg["count"] += 1\n\n        elif event_cat == "init":\n            reg["init_time"] += duration\n\n        elif event_cat == "transfer":\n            reg["_transfer_events"][\n                (line_num, tag)\n            ].append(duration)\n\n    # Classify transfer sites by observed runtime frequency.\n    #\n    # One execution at a site:\n    #     one-time transfer/setup\n    #\n    # Multiple executions at a site:\n    #     recurring transfer cost\n    for reg in regions:\n        for durations in reg[\n            "_transfer_events"\n        ].values():\n            if len(durations) == 1:\n                reg[\n                    "one_time_transfer_time"\n                ] += durations[0]\n            else:\n                reg[\n                    "recurring_transfer_time"\n                ] += sum(durations)\n\n    if matched_events == 0:\n        print(\n            "[!] Warning: No [PROFILER] output logs "\n            "were detected."\n        )\n        print(\n            f"[!] Executable Return Code: {returncode}"\n        )\n\n\n# =============================================================================\n# Report\n# =============================================================================\n\ndef print_results(regions):\n    """\n    Report semantics retained from the validated OpenACC profiler.\n\n    Total Res(s):\n        cumulative kernel-only resident time across all invocations.\n\n    Avg Res(s):\n        kernel-only resident time of one invocation.\n\n    Total Obs(s):\n        cumulative observed contribution over the original run:\n            init\n          + one-time transfers/setup\n          + recurring transfers\n          + all kernel invocations\n\n    Avg Obs(s):\n        observed cost of one COLD/FIRST invocation:\n            full GPU initialization\n          + full one-time transfer/setup cost\n          + average recurring cost per invocation\n\n        Initialization and one-time setup are intentionally NOT divided by\n        invocation count.\n    """\n    header = (\n        f"{\'Region\':<8} | "\n        f"{\'Lines\':<8} | "\n        f"{\'Invocations\':<11} | "\n        f"{\'Total Res(s)\':<12} | "\n        f"{\'Avg Res(s)\':<12} | "\n        f"{\'Total Obs(s)\':<12} | "\n        f"{\'Avg Obs(s)\':<12}"\n    )\n\n    divider = "-" * len(header)\n\n    print(divider)\n    print(\n        "                    "\n        "CAPC PROFITABILITY REGION REPORT (OPENACC)"\n    )\n    print(divider)\n    print(header)\n    print(divider)\n\n    total_resident = 0.0\n    total_observed = 0.0\n    total_invocations = 0\n\n    for reg in regions:\n        actual_count = reg["count"]\n        count = max(actual_count, 1)\n\n        avg_resident = (\n            reg["resident_time"] / count\n        )\n\n        avg_recurring_observed = (\n            reg["resident_time"]\n            + reg["recurring_transfer_time"]\n        ) / count\n\n        avg_observed = (\n            reg["init_time"]\n            + reg["one_time_transfer_time"]\n            + avg_recurring_observed\n        )\n\n        total_observed_region = (\n            reg["init_time"]\n            + reg["one_time_transfer_time"]\n            + reg["recurring_transfer_time"]\n            + reg["resident_time"]\n        )\n\n        total_resident += reg["resident_time"]\n        total_observed += total_observed_region\n        total_invocations += actual_count\n\n        line_range = (\n            f"{reg[\'begin_line\']}-"\n            f"{reg[\'end_line\']}"\n        )\n\n        print(\n            f"Region {reg[\'id\']:<1} | "\n            f"{line_range:<8} | "\n            f"{actual_count:<11} | "\n            f"{reg[\'resident_time\']:<12.6f} | "\n            f"{avg_resident:<12.6f} | "\n            f"{total_observed_region:<12.6f} | "\n            f"{avg_observed:<12.6f}"\n        )\n\n    print(divider)\n\n    avg_total_res = (\n        total_resident\n        / max(total_invocations, 1)\n    )\n\n    # Preserve the historical TOTAL-row convention.\n    avg_total_obs = (\n        total_observed\n        / max(total_invocations, 1)\n    )\n\n    print(\n        f"{\'TOTAL\':<8} | "\n        f"{\'-\':<8} | "\n        f"{total_invocations:<11} | "\n        f"{total_resident:<12.6f} | "\n        f"{avg_total_res:<12.6f} | "\n        f"{total_observed:<12.6f} | "\n        f"{avg_total_obs:<12.6f}"\n    )\n\n    print(divider + "\\n")\n\n\n# =============================================================================\n# Main\n# =============================================================================\n\ndef main():\n    parser = argparse.ArgumentParser(\n        description=(\n            "Compile, run and profile OpenACC CAPC regions while separating "\n            "resident kernel time, GPU initialization, one-time transfers, "\n            "and recurring transfers. Explicit copy/copyin/copyout clauses "\n            "on compute constructs are separated from kernel timing."\n        )\n    )\n\n    parser.add_argument(\n        "source",\n        help="Path to OpenACC source C file",\n    )\n\n    parser.add_argument(\n        "--gpu",\n        default="cc70",\n        help="GPU architecture (default: cc70)",\n    )\n\n    parser.add_argument(\n        "--timeout",\n        type=int,\n        default=300,\n        help=(\n            "Execution timeout in seconds "\n            "(default: 300)"\n        ),\n    )\n\n    args = parser.parse_args()\n\n    source_path = os.path.abspath(\n        args.source\n    )\n\n    if not os.path.exists(source_path):\n        print(\n            f"Error: Source file "\n            f"\'{args.source}\' not found."\n        )\n        sys.exit(1)\n\n    work_dir = os.path.dirname(source_path)\n\n    exec_name = os.path.splitext(\n        os.path.basename(source_path)\n    )[0]\n\n    exec_path = os.path.join(\n        work_dir,\n        exec_name,\n    )\n\n    regions = parse_regions(source_path)\n\n    if not regions:\n        print(\n            "Error: No "\n            "\'#pragma capc profitability_region\' "\n            "blocks found in source file."\n        )\n        sys.exit(1)\n\n    temp_fd, temp_source_path = tempfile.mkstemp(\n        suffix=".c",\n        dir=work_dir,\n    )\n    os.close(temp_fd)\n\n    try:\n        instrument_openacc_source(\n            source_path,\n            temp_source_path,\n            regions,\n        )\n\n        compile_openacc_program(\n            temp_source_path,\n            exec_path,\n            gpu_arch=args.gpu,\n        )\n\n        (\n            stdout_str,\n            stderr_str,\n            returncode,\n        ) = run_executable(\n            exec_path,\n            timeout=args.timeout,\n        )\n\n        process_profiler_output(\n            stdout_str,\n            stderr_str,\n            returncode,\n            regions,\n        )\n\n        print_results(regions)\n\n    finally:\n        if os.path.exists(temp_source_path):\n            os.remove(temp_source_path)\n\n\nif __name__ == "__main__":\n    main()\n'
+GENERATOR_SOURCE = '#!/usr/bin/env python3\n\nimport sys\nimport re\nimport os\nimport shutil\nimport subprocess\nfrom dataclasses import dataclass\nfrom typing import List, Optional, Tuple\n\n\n# -----------------------------------------------------------------------------\n# Data structures\n# -----------------------------------------------------------------------------\n\n@dataclass\nclass FunctionInfo:\n    name: str\n    start: int               # beginning of function signature\n    open_brace: int          # position of \'{\'\n    close_brace: int         # position of matching \'}\'\n    signature: str\n\n    @property\n    def body_start(self):\n        return self.open_brace + 1\n\n    @property\n    def body_end(self):\n        return self.close_brace\n\n\n@dataclass\nclass RegionInfo:\n    region_id: str\n    start: int\n    end: int\n    begin_line: str\n    body_code: str\n    end_line: str\n    full_block: str\n    function: FunctionInfo\n\n\n# -----------------------------------------------------------------------------\n# C source scanning helpers\n# -----------------------------------------------------------------------------\n\ndef mask_comments_and_strings(code: str) -> str:\n    """\n    Return a same-length string where comments/string/char literal contents are\n    replaced by spaces. Newlines are preserved. This makes brace matching and\n    function discovery substantially safer than counting raw \'{\' and \'}\'.\n    """\n    out = list(code)\n    i = 0\n    n = len(code)\n\n    while i < n:\n        # // comment\n        if i + 1 < n and code[i] == \'/\' and code[i + 1] == \'/\':\n            j = i\n            while j < n and code[j] != \'\\n\':\n                out[j] = \' \'\n                j += 1\n            i = j\n            continue\n\n        # /* comment */\n        if i + 1 < n and code[i] == \'/\' and code[i + 1] == \'*\':\n            out[i] = out[i + 1] = \' \'\n            j = i + 2\n            while j + 1 < n and not (code[j] == \'*\' and code[j + 1] == \'/\'):\n                if code[j] != \'\\n\':\n                    out[j] = \' \'\n                j += 1\n            if j + 1 < n:\n                out[j] = out[j + 1] = \' \'\n                j += 2\n            i = j\n            continue\n\n        # string / character literal\n        if code[i] in (\'"\', "\'"):\n            quote = code[i]\n            if code[i] != \'\\n\':\n                out[i] = \' \'\n            j = i + 1\n            while j < n:\n                if code[j] == \'\\\\\':\n                    if code[j] != \'\\n\':\n                        out[j] = \' \'\n                    if j + 1 < n:\n                        if code[j + 1] != \'\\n\':\n                            out[j + 1] = \' \'\n                        j += 2\n                        continue\n                if code[j] == quote:\n                    out[j] = \' \'\n                    j += 1\n                    break\n                if code[j] != \'\\n\':\n                    out[j] = \' \'\n                j += 1\n            i = j\n            continue\n\n        i += 1\n\n    return \'\'.join(out)\n\n\ndef find_matching_brace(masked_code: str, opening_brace_pos: int) -> int:\n    if opening_brace_pos < 0 or masked_code[opening_brace_pos] != \'{\':\n        raise ValueError("find_matching_brace() was not given an opening brace")\n\n    depth = 0\n    for pos in range(opening_brace_pos, len(masked_code)):\n        ch = masked_code[pos]\n        if ch == \'{\':\n            depth += 1\n        elif ch == \'}\':\n            depth -= 1\n            if depth == 0:\n                return pos\n\n    raise ValueError(f"Unmatched opening brace at offset {opening_brace_pos}")\n\n\ndef find_functions(content: str) -> List[FunctionInfo]:\n    """\n    Find ordinary C function definitions. This is intentionally lightweight,\n    but unlike the previous script, functions are bounded by matching braces.\n    """\n    masked = mask_comments_and_strings(content)\n\n    # A pragmatic C function-definition matcher. It permits qualifiers/pointers\n    # in the return type and multiline argument lists, while excluding control\n    # statements because they do not have a return-type prefix.\n    func_re = re.compile(\n        r\'(?m)^[ \\t]*\'\n        r\'(?P<prefix>(?:[A-Za-z_][A-Za-z0-9_]*[ \\t\\r\\n\\*]+)+?)\'\n        r\'(?P<name>[A-Za-z_][A-Za-z0-9_]*)\'\n        r\'[ \\t\\r\\n]*\\(\'\n        r\'(?P<args>[^;{}]*?)\'\n        r\'\\)[ \\t\\r\\n]*\\{\'\n    )\n\n    functions = []\n    seen_ranges = set()\n\n    for m in func_re.finditer(masked):\n        name = m.group(\'name\')\n        if name in {\'if\', \'for\', \'while\', \'switch\'}:\n            continue\n\n        open_brace = masked.find(\'{\', m.start(), m.end())\n        if open_brace < 0:\n            continue\n\n        try:\n            close_brace = find_matching_brace(masked, open_brace)\n        except ValueError:\n            continue\n\n        key = (m.start(), close_brace)\n        if key in seen_ranges:\n            continue\n        seen_ranges.add(key)\n\n        signature = content[m.start():open_brace].strip()\n        functions.append(\n            FunctionInfo(\n                name=name,\n                start=m.start(),\n                open_brace=open_brace,\n                close_brace=close_brace,\n                signature=signature,\n            )\n        )\n\n    functions.sort(key=lambda f: f.start)\n    return functions\n\n\ndef enclosing_function(functions: List[FunctionInfo], start: int, end: int) -> Optional[FunctionInfo]:\n    candidates = [\n        f for f in functions\n        if f.body_start <= start and end <= f.body_end\n    ]\n    if not candidates:\n        return None\n    # Smallest containing function range wins.\n    return min(candidates, key=lambda f: f.close_brace - f.start)\n\n\n# -----------------------------------------------------------------------------\n# OpenACC array-clause helpers\n# -----------------------------------------------------------------------------\n\ndef split_acc_clause_items(text: str) -> List[str]:\n    """Split a simple OpenACC data clause list at top-level commas."""\n    items = []\n    current = []\n    square_depth = 0\n    paren_depth = 0\n\n    for ch in text:\n        if ch == \'[\':\n            square_depth += 1\n        elif ch == \']\':\n            square_depth = max(0, square_depth - 1)\n        elif ch == \'(\':\n            paren_depth += 1\n        elif ch == \')\':\n            paren_depth = max(0, paren_depth - 1)\n\n        if ch == \',\' and square_depth == 0 and paren_depth == 0:\n            item = \'\'.join(current).strip()\n            if item:\n                items.append(item)\n            current = []\n        else:\n            current.append(ch)\n\n    item = \'\'.join(current).strip()\n    if item:\n        items.append(item)\n    return items\n\n\n\n\ndef get_declared_array_bounds_map(full_code: str):\n    """\n    Infer full OpenACC array sections from ordinary C array declarations.\n\n    This is the fallback required for CAPC/OpenACC regions whose compute pragma\n    does not contain present/copy/create clauses, for example:\n\n        double a[2000][2000];\n        #pragma acc parallel loop gang vector\n        ... a[i][k] ...\n\n    The declaration above becomes:\n        a -> a[0:2000][0:2000]\n\n    Existing explicit OpenACC sections remain authoritative and override these\n    declaration-derived fallbacks in get_array_bounds_map().\n    """\n    code = mask_comments_and_strings(full_code)\n    result = {}\n\n    # Conservative C declaration recognizer.  It intentionally targets normal\n    # scalar/array declarations used by benchmark kernels rather than trying to\n    # implement a full C parser.\n    type_re = (\n        r\'(?:static\\s+|extern\\s+|const\\s+|volatile\\s+|register\\s+|\'\n        r\'restrict\\s+|_Alignas\\s*\\([^)]*\\)\\s+)*\'\n        r\'(?:(?:unsigned|signed)\\s+)?\'\n        r\'(?:(?:long\\s+long|long|short)\\s+)?\'\n        r\'(?:double|float|int|char|size_t|ptrdiff_t|_Bool)\\b\'\n    )\n\n    for m in re.finditer(\n        rf\'(?m)^[ \\t]*{type_re}([^;]*);\',\n        code,\n    ):\n        declarators = m.group(1)\n        for am in re.finditer(\n            r\'\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\'\n            r\'((?:\\[[^\\]]+\\]\\s*)+)\',\n            declarators,\n        ):\n            name = am.group(1)\n            dims_text = am.group(2)\n            dims = re.findall(r\'\\[\\s*([^\\]]+)\\s*\\]\', dims_text)\n            if not dims:\n                continue\n\n            spec = name\n            valid = True\n            for dim in dims:\n                dim = dim.strip()\n                if not dim:\n                    valid = False\n                    break\n                spec += f\'[0:{dim}]\'\n\n            if valid and name not in result:\n                result[name] = spec\n\n    return result\n\n\ndef get_array_bounds_map(full_code: str):\n    """\n    Build var -> array-section specification.\n\n    Priority:\n      1. Explicit OpenACC data/update clauses (most precise).\n      2. Ordinary C array declarations (fallback).\n\n    This means regions with no data clause on the compute pragma can still be\n    isolated correctly from their C body and declarations.\n    """\n    bounds_map = {}\n\n    clause_matches = re.findall(\n        r\'\\b(?:create|copyin|copyout|copy|present|pcopy|pcopyin|pcopyout|\'\n        r\'present_or_copy|present_or_copyin|present_or_copyout|\'\n        r\'deviceptr)\\s*\\(([^)]*)\\)\',\n        full_code,\n        re.IGNORECASE,\n    )\n\n    for match in clause_matches:\n        for item in split_acc_clause_items(match):\n            var_match = re.match(r\'^([A-Za-z_][A-Za-z0-9_]*)\', item)\n            if not var_match:\n                continue\n            var_name = var_match.group(1)\n            if \'[\' in item and var_name not in bounds_map:\n                bounds_map[var_name] = item.strip()\n\n    update_matches = re.findall(\n        r\'#\\s*pragma\\s+acc\\s+update[^\\n]*?\'\n        r\'\\b(?:device|self|host)\\s*\\(([^)]*)\\)\',\n        full_code,\n        re.IGNORECASE,\n    )\n\n    for match in update_matches:\n        for item in split_acc_clause_items(match):\n            var_match = re.match(r\'^([A-Za-z_][A-Za-z0-9_]*)\', item)\n            if not var_match:\n                continue\n            var_name = var_match.group(1)\n            if \'[\' in item and var_name not in bounds_map:\n                bounds_map[var_name] = item.strip()\n\n    # Declaration-derived sections are fallback only.  Never replace a more\n    # precise section that appeared explicitly in OpenACC source.\n    for name, spec in get_declared_array_bounds_map(full_code).items():\n        bounds_map.setdefault(name, spec)\n\n    return bounds_map\n\n\ndef get_target_region_array_specs(target_block: str, bounds_map):\n    """\n    Determine array variables referenced by the target region.\n\n    OpenACC data clauses are used first. If they only name variables without\n    sections, the global bounds map supplies the full section. As a fallback,\n    indexed array references in the computational body are used.\n    """\n    target_vars = []\n\n    clause_matches = re.findall(\n        r\'\\b(?:create|copyin|copyout|copy|present|pcopy|pcopyin|pcopyout|\'\n        r\'present_or_copy|present_or_copyin|present_or_copyout|deviceptr)\'\n        r\'\\s*\\(([^)]*)\\)\',\n        target_block,\n        re.IGNORECASE,\n    )\n\n    for match in clause_matches:\n        for item in split_acc_clause_items(match):\n            var_match = re.match(r\'^([A-Za-z_][A-Za-z0-9_]*)\', item)\n            if var_match:\n                var_name = var_match.group(1)\n                if var_name not in target_vars:\n                    target_vars.append(var_name)\n\n    indexed_vars = re.findall(\n        r\'\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\[\',\n        strip_openacc_pragmas(target_block),\n    )\n    for var in indexed_vars:\n        if var in bounds_map and var not in target_vars:\n            target_vars.append(var)\n\n    specs = [bounds_map.get(v, v) for v in target_vars]\n    return specs, target_vars\n\n\n\ndef classify_target_array_accesses(target_body: str, target_vars: List[str]):\n    """\n    Classify each target array as read-only, write-only, or read-write.\n\n    Returns:\n        reads  - arrays whose pre-region value is required (H2D)\n        writes - arrays modified/produced by the region (D2H)\n\n    Complete OpenACC pragma groups, including backslash continuation lines,\n    are removed before classification so data clauses never look like reads.\n    """\n    computational_code = strip_openacc_pragmas(target_body)\n    computational_lines = [\n        line for line in computational_code.splitlines()\n        if not line.lstrip().startswith(\'#\')\n    ]\n    code = mask_comments_and_strings(\'\\n\'.join(computational_lines))\n\n    reads = []\n    writes = []\n\n    for var in target_vars:\n        saw_read = False\n        saw_write = False\n        pat = re.compile(\n            r\'\\b\' + re.escape(var) + r\'\\s*(?:\\[[^\\]]*\\]\\s*)+\'\n        )\n\n        for m in pat.finditer(code):\n            before = code[max(0, m.start() - 4):m.start()]\n            after = code[m.end():m.end() + 8]\n\n            if (\n                re.search(r\'(?:\\+\\+|--)\\s*$\', before)\n                or re.match(r\'\\s*(?:\\+\\+|--)\', after)\n            ):\n                saw_read = True\n                saw_write = True\n                continue\n\n            op = re.match(\n                r\'\\s*(<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|=)\',\n                after,\n            )\n            if op:\n                saw_write = True\n                if op.group(1) != \'=\':\n                    saw_read = True\n            else:\n                saw_read = True\n\n        if saw_read:\n            reads.append(var)\n        if saw_write:\n            writes.append(var)\n\n    return reads, writes\n\n\ndef specs_for_vars(var_names: List[str], bounds_map):\n    return [bounds_map.get(v, v) for v in var_names]\n\n\ndef strip_openacc_pragmas(code: str) -> str:\n    """\n    Remove OpenACC pragmas from replay/setup code so prerequisite computation is\n    executed on the host only and cannot contaminate target GPU timing.\n    Continuation lines belonging to a backslash-continued pragma are removed too.\n    """\n    out = []\n    skipping_continuation = False\n    for line in code.splitlines():\n        stripped = line.lstrip()\n        if skipping_continuation:\n            skipping_continuation = line.rstrip().endswith(\'\\\\\')\n            continue\n        if re.match(r\'^#\\s*pragma\\s+acc\\b\', stripped, re.IGNORECASE):\n            skipping_continuation = line.rstrip().endswith(\'\\\\\')\n            continue\n        out.append(line)\n    return \'\\n\'.join(out)\n\n\n\ndef _normalize_acc_pragma_group(group: List[str]) -> str:\n    """Collapse one backslash-continued OpenACC pragma into one legal line."""\n    parts = []\n    for physical in group:\n        part = physical.rstrip()\n        if part.endswith(\'\\\\\'):\n            part = part[:-1].rstrip()\n        parts.append(part.strip())\n    return re.sub(r\'\\s+\', \' \', \' \'.join(p for p in parts if p)).strip()\n\n\ndef strip_acc_data_clauses_from_pragma(pragma_text: str) -> str:\n    """\n    Remove OpenACC data-environment clauses that can allocate or transfer data\n    from a compute pragma. The standalone driver performs allocation and H2D/D2H\n    explicitly outside the kernel timer.\n    """\n    clause_names = (\n        \'copy\', \'copyin\', \'copyout\', \'create\', \'present\',\n        \'pcopy\', \'pcopyin\', \'pcopyout\',\n        \'present_or_copy\', \'present_or_copyin\', \'present_or_copyout\',\n        \'deviceptr\'\n    )\n    name_re = \'|\'.join(re.escape(x) for x in clause_names)\n\n    out = []\n    i = 0\n    n = len(pragma_text)\n\n    while i < n:\n        match = re.search(\n            rf\'\\b(?:{name_re})\\s*\\(\',\n            pragma_text[i:],\n            re.IGNORECASE,\n        )\n        if not match:\n            out.append(pragma_text[i:])\n            break\n\n        start = i + match.start()\n        open_paren = i + match.end() - 1\n        out.append(pragma_text[i:start])\n\n        depth = 0\n        pos = open_paren\n        while pos < n:\n            if pragma_text[pos] == \'(\':\n                depth += 1\n            elif pragma_text[pos] == \')\':\n                depth -= 1\n                if depth == 0:\n                    pos += 1\n                    break\n            pos += 1\n        i = pos\n\n    cleaned = \'\'.join(out)\n    cleaned = re.sub(r\'[ \\t]+\', \' \', cleaned).strip()\n    return cleaned\n\n\ndef rewrite_target_mapping_for_standalone(\n    target_block: str,\n    target_specs: List[str],\n) -> str:\n    """\n    Normalize OpenACC multiline pragmas and rewrite the target compute directive\n    so no implicit allocation/H2D/D2H is hidden inside kernel timing.\n\n    Original data clauses such as copy/copyin/copyout/create/present are removed\n    from the first OpenACC compute directive and replaced with present(...).\n    Device storage has already been created and required H2D was timed before\n    this region.\n    """\n    lines = target_block.splitlines()\n    groups = []\n    i = 0\n\n    while i < len(lines):\n        line = lines[i]\n        if re.match(r\'^\\s*#\\s*pragma\\s+acc\\b\', line, re.IGNORECASE):\n            group = [line]\n            i += 1\n            while group[-1].rstrip().endswith(\'\\\\\') and i < len(lines):\n                group.append(lines[i])\n                i += 1\n            groups.append((\'pragma\', group))\n        else:\n            groups.append((\'normal\', [line]))\n            i += 1\n\n    rewritten = []\n    target_rewritten = False\n\n    for kind, group in groups:\n        if kind != \'pragma\':\n            rewritten.extend(group)\n            continue\n\n        logical = _normalize_acc_pragma_group(group)\n        lower = logical.lower()\n\n        is_compute = bool(\n            re.search(r\'#\\s*pragma\\s+acc\\s+(?:parallel|kernels|serial)\\b\', lower)\n        )\n\n        # Data-management directives are never the target kernel pragma.\n        is_data_mgmt = bool(\n            re.search(\n                r\'#\\s*pragma\\s+acc\\s+(?:enter\\s+data|exit\\s+data|data\\b|update\\b|wait\\b)\',\n                lower,\n            )\n        )\n\n        if is_compute and not is_data_mgmt and not target_rewritten:\n            clean = strip_acc_data_clauses_from_pragma(logical)\n            if target_specs:\n                clean = clean.rstrip() + \' present(\' + \', \'.join(target_specs) + \')\'\n            rewritten.append(clean)\n            target_rewritten = True\n        else:\n            # Even untouched ACC pragma groups are normalized so a literal\n            # backslash cannot be stranded in generated code.\n            rewritten.append(logical)\n\n    return \'\\n\'.join(rewritten)\n\n\ndef extract_safe_inter_region_scalar_setup(gap_code: str) -> str:\n    """\n    Keep only cheap scalar setup statements from code that originally appeared\n    between CAPC regions.\n\n    Why this exists:\n      When an earlier CAPC compute region is intentionally skipped, its\n      verification/output/post-processing must NOT be replayed.  However, some\n      real programs place scalar resets between regions, e.g.:\n\n          dt = 0.0;\n          sum = 0.0;\n          alpha = beta + 1.0;\n\n      Those cheap scalar statements can be prerequisites for the next target.\n\n    Conservative policy:\n      * OpenACC pragmas are discarded.\n      * control-flow blocks, printf/fprintf/puts, array accesses, function calls,\n        increments/decrements, and preprocessor conditionals are discarded.\n      * only a simple scalar assignment statement is retained.\n\n    This deliberately prefers a clean, deterministic standalone setup over\n    replaying arbitrary host-side post-processing.\n    """\n    code = strip_openacc_pragmas(gap_code)\n    safe = []\n\n    # Remove comments for recognition, but preserve the original statement text.\n    for original in code.splitlines():\n        stripped = original.strip()\n\n        if not stripped:\n            continue\n\n        if stripped.startswith("#"):\n            continue\n\n        if re.match(r"^(for|while|if|switch|do|else)\\b", stripped):\n            continue\n\n        if re.search(r"\\b(?:printf|fprintf|sprintf|snprintf|puts|putchar)\\s*\\(", stripped):\n            continue\n\n        if "[" in stripped or "]" in stripped:\n            continue\n\n        if "++" in stripped or "--" in stripped:\n            continue\n\n        # Do not keep obvious function calls.  Parentheses are allowed only on\n        # the RHS as arithmetic grouping/casts, not as identifier(...).\n        no_strings = mask_comments_and_strings(stripped)\n        if re.search(r"\\b[A-Za-z_][A-Za-z0-9_]*\\s*\\(", no_strings):\n            # Permit common C casts such as (double)x by not rejecting a line\n            # merely because it contains parentheses; reject identifier(...).\n            continue\n\n        # Simple scalar assignment only.  This also accepts compound arithmetic\n        # expressions on the RHS, but not declarations or array statements.\n        if re.match(\n            r"^[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[^;]+;\\s*$",\n            stripped,\n        ):\n            safe.append(stripped)\n\n    if not safe:\n        return ""\n\n    return (\n        "/* Safe scalar setup retained from inter-region host code. */\\n"\n        + "\\n".join(safe)\n    )\n\n\ndef process_prior_capc_regions(prefix_code: str, bounds_map):\n    """\n    Build cheap host prerequisite replay for a later standalone region.\n\n    FINAL replay policy\n    -------------------\n    1. Host code before the FIRST earlier CAPC region is preserved.  This is\n       where declarations, input initialization, loop-bound setup, etc. usually\n       live.\n\n    2. Earlier CAPC regions that are pure array producers/initializers\n       (write arrays but read no arrays) are replayed on the host.\n\n    3. Earlier CAPC regions that read arrays are treated as compute regions and\n       are NOT replayed serially.  Their written arrays are recorded so a target\n       that truly needs such an output can receive cheap deterministic synthetic\n       initialization instead.\n\n    4. Host code BETWEEN earlier CAPC regions is NOT replayed wholesale.\n       Verification loops, prints, result checking, target updates, and other\n       consumers of skipped results are therefore removed.\n\n       Only conservative scalar assignments such as:\n           dt = 0.0;\n           sum = 0.0;\n       are retained.\n\n    This fixes two important failure modes:\n      * O(N^3) predecessor kernels being replayed on the CPU (3mm case).\n      * verification/output code executing after its producer was skipped\n        (vector-arithmetic Region 3/4 case).\n    """\n    lines = prefix_code.splitlines()\n\n    begin_re = re.compile(\n        r\'^\\s*#\\s*pragma\\s+capc\\s+profitability_region\\s+begin\\b\',\n        re.IGNORECASE,\n    )\n    end_re = re.compile(\n        r\'^\\s*#\\s*pragma\\s+capc\\s+profitability_region\\s+end\\b\',\n        re.IGNORECASE,\n    )\n\n    # Split prefix into:\n    #   leading ordinary host code\n    #   [CAPC block, following gap] ...\n    leading = []\n    region_blocks = []\n    gaps = []\n\n    i = 0\n    while i < len(lines) and not begin_re.match(lines[i]):\n        leading.append(lines[i])\n        i += 1\n\n    while i < len(lines):\n        # If malformed/unexpected ordinary text appears before another region,\n        # treat it as a gap rather than blindly replaying it.\n        if not begin_re.match(lines[i]):\n            gap = []\n            while i < len(lines) and not begin_re.match(lines[i]):\n                gap.append(lines[i])\n                i += 1\n            gaps.append(gap)\n            continue\n\n        block = [lines[i]]\n        i += 1\n        while i < len(lines):\n            block.append(lines[i])\n            if end_re.match(lines[i]):\n                i += 1\n                break\n            i += 1\n\n        region_blocks.append(block)\n\n        gap = []\n        while i < len(lines) and not begin_re.match(lines[i]):\n            gap.append(lines[i])\n            i += 1\n        gaps.append(gap)\n\n    out = list(leading)\n    skipped_outputs = []\n    replayed_initializers = 0\n    skipped_compute = 0\n\n    for block_index, block_lines in enumerate(region_blocks):\n        body_lines = [\n            line for line in block_lines\n            if not begin_re.match(line) and not end_re.match(line)\n        ]\n        body = \'\\n\'.join(body_lines)\n        full_block = \'\\n\'.join(block_lines)\n\n        _, var_names = get_target_region_array_specs(full_block, bounds_map)\n        reads, writes = classify_target_array_accesses(body, var_names)\n\n        if writes and not reads:\n            replay = strip_openacc_pragmas(body)\n            # Remove the common anti-optimization dummy print without touching\n            # meaningful assignments.\n            replay = re.sub(\n                r\'\\bprintf\\s*\\(\\s*""\\s*\\)\\s*;\',\n                \'\',\n                replay,\n            )\n\n            out.append(\n                \'/* Earlier CAPC producer/initializer replayed on host. */\'\n            )\n            out.extend(replay.splitlines())\n            replayed_initializers += 1\n\n        else:\n            out.append(\n                \'/* Earlier CAPC compute region omitted from standalone host replay. */\'\n            )\n            skipped_compute += 1\n            for var in writes:\n                if var not in skipped_outputs:\n                    skipped_outputs.append(var)\n\n        # Never replay the complete gap after a CAPC region.  It often contains\n        # verification/output code for that region.  Retain only conservative\n        # scalar setup that may be needed by a following target.\n        if block_index < len(gaps):\n            safe_gap = extract_safe_inter_region_scalar_setup(\n                \'\\n\'.join(gaps[block_index])\n            )\n            if safe_gap:\n                out.extend(safe_gap.splitlines())\n\n    return (\n        \'\\n\'.join(out),\n        skipped_outputs,\n        replayed_initializers,\n        skipped_compute,\n    )\n\n\ndef zero_initialization_for_array_spec(spec: str, serial: int) -> str:\n    """\n    Generate deterministic O(number-of-elements) host zero initialization for\n    an OpenACC array section such as A[0:N] or M[0:N][0:N].\n    """\n    m = re.match(r\'^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(.*)$\', spec)\n    if not m:\n        return \'\'\n\n    var = m.group(1)\n    suffix = m.group(2)\n    dims = re.findall(r\'\\[\\s*([^:\\]]+)\\s*:\\s*([^\\]]+)\\]\', suffix)\n    if not dims:\n        return \'\'\n\n    idx_names = [f\'__capc_z{serial}_{d}\' for d in range(len(dims))]\n    indent = \'\'\n    lines = []\n\n    for (lower, length), idx in zip(dims, idx_names):\n        lines.append(\n            indent\n            + f\'for (size_t {idx} = 0; {idx} < (size_t)({length.strip()}); ++{idx}) {{\'\n        )\n        indent += \'    \'\n\n    access = var + \'\'.join(\n        f\'[({lower.strip()}) + {idx}]\'\n        for (lower, _), idx in zip(dims, idx_names)\n    )\n    lines.append(indent + f\'{access} = 0;\')\n\n    for _ in dims:\n        indent = indent[:-4]\n        lines.append(indent + \'}\')\n\n    return \'\\n\'.join(lines)\n\n\ndef build_synthetic_input_initialization(\n    skipped_outputs: List[str],\n    target_read_vars: List[str],\n    bounds_map,\n):\n    """\n    Cheaply initialize target inputs whose latest prerequisite producer was an\n    omitted expensive CAPC compute region.\n    """\n    needed = [\n        var for var in target_read_vars\n        if var in skipped_outputs\n    ]\n\n    blocks = []\n    unresolved = []\n\n    for serial, var in enumerate(needed):\n        spec = bounds_map.get(var, var)\n        code = zero_initialization_for_array_spec(spec, serial)\n        if code:\n            blocks.append(\n                f"/* Synthetic valid input for \'{var}\': prior CAPC producer was skipped. */\\n"\n                + code\n            )\n        else:\n            unresolved.append(var)\n\n    return \'\\n\'.join(blocks), unresolved\n\n\n# -----------------------------------------------------------------------------\n# Segment cleanup\n# -----------------------------------------------------------------------------\n\ndef line_brace_delta(line: str) -> int:\n    masked = mask_comments_and_strings(line)\n    return masked.count(\'{\') - masked.count(\'}\')\n\n\ndef block_is_unclosed_from_line(start_idx: int, lines: List[str]) -> bool:\n    """True when a control block opened here is not closed within this segment."""\n    depth = 0\n    opened = False\n    joined = \'\\n\'.join(lines[start_idx:])\n    masked = mask_comments_and_strings(joined)\n\n    for ch in masked:\n        if ch == \'{\':\n            depth += 1\n            opened = True\n        elif ch == \'}\':\n            depth -= 1\n            if opened and depth <= 0:\n                return False\n\n    return opened and depth > 0\n\n\ndef sanitize_c_segment(code_str: str) -> str:\n    """\n    Clean a function prefix so it can be replayed inside the synthetic main().\n\n    Key rule: if the target lies inside an outer control block, the prefix ends\n    before that block\'s closing brace.  We remove ONLY the unmatched opening\n    control construct(s).  We never consume some earlier nested loop\'s closing\n    brace.  This preserves complete prerequisite loops from previous regions.\n    """\n    lines = code_str.splitlines()\n\n    # ------------------------------------------------------------------\n    # Find physical line numbers that contain opening braces which remain\n    # unmatched at the end of this prefix.  Those are precisely the outer\n    # scopes containing the target.\n    # ------------------------------------------------------------------\n    brace_stack = []\n    masked_lines = [mask_comments_and_strings(line) for line in lines]\n\n    for idx, masked in enumerate(masked_lines):\n        for ch in masked:\n            if ch == "{":\n                brace_stack.append(idx)\n            elif ch == "}" and brace_stack:\n                brace_stack.pop()\n\n    unmatched_open_lines = set(brace_stack)\n\n    # Map an unmatched standalone "{" line to a preceding control-header line\n    # when code is written as:\n    #     for (...)\n    #     {\n    header_lines_to_remove = set()\n    brace_lines_to_remove = set()\n\n    control_re = re.compile(r"^\\s*(for|while|if|switch|do)\\b")\n\n    for open_idx in sorted(unmatched_open_lines):\n        stripped = lines[open_idx].strip()\n\n        if control_re.match(stripped) and "{" in stripped:\n            header_lines_to_remove.add(open_idx)\n            continue\n\n        if stripped == "{":\n            prev = open_idx - 1\n            while prev >= 0 and not lines[prev].strip():\n                prev -= 1\n            if prev >= 0 and control_re.match(lines[prev].strip()):\n                header_lines_to_remove.add(prev)\n                brace_lines_to_remove.add(open_idx)\n                continue\n\n        # An unmatched function/local compound scope that is not a recognizable\n        # control construct is safer to drop only at its opening brace.  This\n        # prevents an unterminated block in generated main().\n        brace_lines_to_remove.add(open_idx)\n\n    clean = []\n    pp_depth = 0\n\n    for idx, original in enumerate(lines):\n        line = original\n        stripped = line.strip()\n\n        if "profitability_region" in stripped:\n            continue\n\n        if idx in header_lines_to_remove:\n            # If header and opening brace share one physical line, remove both.\n            continue\n\n        if idx in brace_lines_to_remove:\n            continue\n\n        # Orphaned break/continue cannot be replayed safely once the containing\n        # outer loop has been removed.\n        if re.match(r"^\\s*(break|continue)\\s*;\\s*$", stripped):\n            clean.append(\n                f"// {stripped}  /* skipped: possibly orphaned in standalone replay */"\n            )\n            continue\n\n        # Preserve balanced preprocessor structure.\n        if re.match(r"^\\s*#\\s*(if|ifdef|ifndef)\\b", stripped):\n            pp_depth += 1\n            clean.append(line)\n        elif re.match(r"^\\s*#\\s*endif\\b", stripped):\n            if pp_depth > 0:\n                pp_depth -= 1\n                clean.append(line)\n            else:\n                clean.append(f"// {line}  /* skipped orphaned #endif */")\n        elif re.match(r"^\\s*#\\s*(else|elif)\\b", stripped):\n            if pp_depth > 0:\n                clean.append(line)\n            else:\n                clean.append(\n                    f"// {line}  /* skipped orphaned preprocessor directive */"\n                )\n        else:\n            clean.append(line)\n\n    while pp_depth > 0:\n        clean.append("#endif /* auto-closed by standalone generator */")\n        pp_depth -= 1\n\n    return "\\n".join(clean)\n\n\ndef remove_function_from_source(content: str, func: FunctionInfo) -> str:\n    """Remove one function definition while preserving all other source text."""\n    return content[:func.start] + content[func.close_brace + 1:]\n\n\ndef contains_acc_data_allocation(code: str) -> bool:\n    lower = code.lower()\n    return bool(re.search(r\'#\\s*pragma\\s+acc\\s+(enter\\s+data|data\\b)\', lower))\n\n\ndef strip_capc_markers(code: str) -> str:\n    return \'\\n\'.join(\n        line for line in code.splitlines()\n        if \'profitability_region\' not in line\n    )\n\n\n# -----------------------------------------------------------------------------\n# Parsing\n# -----------------------------------------------------------------------------\n\ndef parse_c_file(file_path: str):\n    with open(file_path, \'r\') as f:\n        content = f.read()\n\n    functions = find_functions(content)\n    if not functions:\n        raise ValueError("No C function definitions could be found.")\n\n    main_func = next((f for f in functions if f.name == \'main\'), None)\n    if main_func is None:\n        raise ValueError("Could not locate main() function in the input file.")\n\n    bounds_map = get_array_bounds_map(content)\n\n    region_pattern = re.compile(\n        r\'(#pragma\\s+capc\\s+profitability_region\\s+begin[^\\n]*\\n)\'\n        r\'(.*?)\'\n        r\'(#pragma\\s+capc\\s+profitability_region\\s+end[^\\n]*)\',\n        re.DOTALL | re.IGNORECASE,\n    )\n\n    region_matches = list(region_pattern.finditer(content))\n    if not region_matches:\n        raise ValueError("No \'#pragma capc profitability_region begin/end\' markers found in file.")\n\n    regions = []\n    for idx, match in enumerate(region_matches, start=1):\n        fn = enclosing_function(functions, match.start(), match.end())\n        if fn is None:\n            raise ValueError(\n                f"Profitability region {idx} is not contained in a recognized function."\n            )\n\n        begin_line = match.group(1).strip()\n        body_code = match.group(2).strip()\n        end_line = match.group(3).strip()\n\n        id_match = re.search(\n            r\'begin\\s*(?:\\(\\s*([A-Za-z0-9_]+)\\s*\\)|\\s+([A-Za-z0-9_]+))\',\n            begin_line,\n            re.IGNORECASE,\n        )\n        if id_match:\n            region_id = id_match.group(1) or id_match.group(2)\n        else:\n            region_id = str(idx)\n\n        full_block = f"{begin_line}\\n{body_code}\\n{end_line}"\n        regions.append(\n            RegionInfo(\n                region_id=region_id,\n                start=match.start(),\n                end=match.end(),\n                begin_line=begin_line,\n                body_code=body_code,\n                end_line=end_line,\n                full_block=full_block,\n                function=fn,\n            )\n        )\n\n    return content, functions, main_func, regions, bounds_map\n\n\n# -----------------------------------------------------------------------------\n# Standalone generation\n# FINAL: Isolated time = GPU runtime initialization + H2D + kernel + D2H\n# -----------------------------------------------------------------------------\n\ndef clean_directory(output_dir: str):\n    if os.path.exists(output_dir):\n        print(f"Cleaning previous standalone region files in \'{output_dir}\'...")\n        shutil.rmtree(output_dir)\n    os.makedirs(output_dir, exist_ok=True)\n\n\ndef get_function_prefix(content: str, target: RegionInfo) -> str:\n    """Everything in the target\'s enclosing function before the target region."""\n    return content[target.function.body_start:target.start]\n\n\ndef get_prior_regions_in_same_function(target: RegionInfo, regions: List[RegionInfo]) -> List[RegionInfo]:\n    """Return CAPC regions that execute earlier in the same enclosing function."""\n    return [\n        r for r in regions\n        if r.function.start == target.function.start and r.end <= target.start\n    ]\n\n\n\ndef generate_standalone_files(\n    content: str,\n    functions: List[FunctionInfo],\n    main_func: FunctionInfo,\n    regions: List[RegionInfo],\n    bounds_map,\n    output_dir: str = "standalone_regions",\n):\n    clean_directory(output_dir)\n\n    support_source = remove_function_from_source(content, main_func)\n    support_source = strip_capc_markers(support_source)\n    # Any helper invoked during prerequisite setup must run on the host.\n    support_source = strip_openacc_pragmas(support_source)\n\n    generated_files = []\n\n    for target in regions:\n        filename = os.path.join(\n            output_dir, f"region_{target.region_id}_standalone.c"\n        )\n\n        # ------------------------------------------------------------------\n        # Target data dependence\n        # ------------------------------------------------------------------\n        array_specs, target_var_names = get_target_region_array_specs(\n            target.full_block, bounds_map\n        )\n        read_vars, write_vars = classify_target_array_accesses(\n            target.body_code, target_var_names\n        )\n\n        # ------------------------------------------------------------------\n        # Host-only prerequisite replay with expensive-predecessor avoidance\n        # ------------------------------------------------------------------\n        prefix_raw = get_function_prefix(content, target)\n        (\n            prefix_policy,\n            skipped_prior_outputs,\n            replayed_initializer_count,\n            skipped_compute_count,\n        ) = process_prior_capc_regions(prefix_raw, bounds_map)\n\n        prefix_clean = sanitize_c_segment(prefix_policy).strip()\n        prefix_clean = strip_openacc_pragmas(prefix_clean).strip()\n\n        synthetic_init, unresolved_synthetic = (\n            build_synthetic_input_initialization(\n                skipped_prior_outputs,\n                read_vars,\n                bounds_map,\n            )\n        )\n\n        h2d_specs = specs_for_vars(read_vars, bounds_map)\n        d2h_specs = specs_for_vars(write_vars, bounds_map)\n\n        h2d_str = ", ".join(h2d_specs)\n        d2h_str = ", ".join(d2h_specs)\n        target_specs_str = ", ".join(array_specs)\n\n        # Ensure original copy/copyin/copyout clauses cannot contaminate the\n        # kernel timer; normalize multiline OpenACC pragmas as well.\n        target_code = rewrite_target_mapping_for_standalone(\n            target.full_block,\n            array_specs,\n        )\n\n        with open(filename, \'w\') as f:\n            f.write("#define _GNU_SOURCE\\n")\n            f.write("#define _POSIX_C_SOURCE 199309L\\n")\n            f.write("#include <time.h>\\n")\n            f.write("#include <stdio.h>\\n")\n            f.write("#include <stdlib.h>\\n")\n            f.write("#include <openacc.h>\\n\\n")\n\n            f.write("/* ============================================================\\n")\n            f.write(" * Original source support code (original main removed)\\n")\n            f.write(" * ============================================================ */\\n")\n            f.write(support_source.rstrip() + "\\n\\n")\n\n            f.write("int main(void)\\n{\\n")\n            f.write("    struct timespec __capc_t_start, __capc_t_end;\\n")\n            f.write("    double __capc_t_init = 0.0;\\n")\n            f.write("    double __capc_t_in = 0.0;\\n")\n            f.write("    double __capc_t_gpu = 0.0;\\n")\n            f.write("    double __capc_t_out = 0.0;\\n\\n")\n\n            f.write(\n                f"    /* Target Region {target.region_id}; original function: "\n                f"{target.function.name}() */\\n"\n            )\n\n            if prefix_clean:\n                f.write("    /* === Host-only input/setup replay (NOT timed) === */\\n")\n                for line in prefix_clean.splitlines():\n                    f.write("    " + line + "\\n")\n                f.write("\\n")\n            else:\n                f.write("    /* No host-side prerequisite/setup code. */\\n\\n")\n\n            if synthetic_init:\n                f.write(\n                    "    /* === Synthetic initialization for inputs whose prior "\n                    "expensive CAPC producer was omitted === */\\n"\n                )\n                for line in synthetic_init.splitlines():\n                    f.write("    " + line + "\\n")\n                f.write("\\n")\n\n            if unresolved_synthetic:\n                f.write(\n                    "    /* WARNING: could not synthesize deterministic values for: "\n                    + ", ".join(unresolved_synthetic)\n                    + ". */\\n\\n"\n                )\n\n            # --------------------------------------------------------------\n            # GPU/OpenACC runtime initialization\n            # --------------------------------------------------------------\n            f.write("    /* === GPU/OpenACC Runtime Initialization === */\\n")\n            f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);\\n")\n            f.write("    acc_init(acc_device_nvidia);\\n")\n            f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);\\n")\n            f.write(\n                "    __capc_t_init = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) "\n                "+ (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;\\n\\n"\n            )\n\n            # Allocation is intentionally outside the isolated-time sum except\n            # for runtime initialization, matching the established methodology.\n            if target_specs_str:\n                f.write("    /* === Device allocation only (no data movement) === */\\n")\n                f.write(\n                    f"    #pragma acc enter data create({target_specs_str})\\n"\n                )\n                f.write("    #pragma acc wait\\n\\n")\n\n            if h2d_str:\n                f.write("    /* === Required Transfer In (Host -> Device) === */\\n")\n                f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);\\n")\n                f.write(f"    #pragma acc update device({h2d_str})\\n")\n                f.write("    #pragma acc wait\\n")\n                f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);\\n")\n                f.write(\n                    "    __capc_t_in = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) "\n                    "+ (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;\\n\\n"\n                )\n            else:\n                f.write(\n                    "    /* H2D skipped: target has no read-before/write input arrays. */\\n\\n"\n                )\n\n            f.write(\n                f"    /* === Isolated Kernel Timing for Target Region "\n                f"{target.region_id} === */\\n"\n            )\n            f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);\\n\\n")\n\n            for line in target_code.splitlines():\n                f.write("    " + line + "\\n")\n\n            f.write("\\n    #pragma acc wait\\n")\n            f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);\\n")\n            f.write(\n                "    __capc_t_gpu = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) "\n                "+ (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;\\n\\n"\n            )\n\n            if d2h_str:\n                f.write("    /* === Required Transfer Out (Device -> Host) === */\\n")\n                f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);\\n")\n                f.write(f"    #pragma acc update self({d2h_str})\\n")\n                f.write("    #pragma acc wait\\n")\n                f.write("    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);\\n")\n                f.write(\n                    "    __capc_t_out = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) "\n                    "+ (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;\\n\\n"\n                )\n            else:\n                f.write(\n                    "    /* D2H skipped: target does not modify any detected array. */\\n\\n"\n                )\n\n            f.write(\n                "    double __capc_t_total = __capc_t_init + __capc_t_in "\n                "+ __capc_t_gpu + __capc_t_out;\\n"\n            )\n            f.write(f\'    printf("Region {target.region_id} Execution Breakdown:\\\\n");\\n\')\n            f.write(\'    printf("  - GPU Initialization : %f seconds\\\\n", __capc_t_init);\\n\')\n            f.write(\'    printf("  - Transfer In  (H2D): %f seconds\\\\n", __capc_t_in);\\n\')\n            f.write(\'    printf("  - Kernel Time (GPU): %f seconds\\\\n", __capc_t_gpu);\\n\')\n            f.write(\'    printf("  - Transfer Out (D2H): %f seconds\\\\n", __capc_t_out);\\n\')\n            f.write(\'    printf("  - Isolated Region Time: %f seconds\\\\n", __capc_t_total);\\n\\n\')\n\n            if target_specs_str:\n                f.write(\n                    f"    #pragma acc exit data delete({target_specs_str})\\n"\n                )\n                f.write("    #pragma acc wait\\n\\n")\n\n            f.write(\n                "    /* Runtime shutdown is cleanup and is intentionally not "\n                "part of isolated time. */\\n"\n            )\n            f.write("    acc_shutdown(acc_device_nvidia);\\n\\n")\n            f.write("    return 0;\\n")\n            f.write("}\\n")\n\n        print(\n            f"Generated: {filename} "\n            f"[enclosing function: {target.function.name}()]"\n        )\n        print(\n            f"  H2D inputs : {\', \'.join(read_vars) if read_vars else \'(none)\'}"\n        )\n        print(\n            f"  D2H outputs: {\', \'.join(write_vars) if write_vars else \'(none)\'}"\n        )\n        print(\n            f"  Prior CAPC producer/initializer regions replayed: "\n            f"{replayed_initializer_count}"\n        )\n        print(\n            f"  Prior CAPC compute regions skipped: {skipped_compute_count}"\n        )\n        if synthetic_init:\n            synthesized = [\n                v for v in read_vars if v in skipped_prior_outputs\n            ]\n            print(\n                f"  Synthetic valid inputs: "\n                f"{\', \'.join(synthesized) if synthesized else \'(none)\'}"\n            )\n        if unresolved_synthetic:\n            print(\n                f"  WARNING unresolved synthetic inputs: "\n                f"{\', \'.join(unresolved_synthetic)}"\n            )\n\n        generated_files.append((target.region_id, filename))\n\n    return generated_files\n\n\n\ndef compile_and_run_regions(\n    generated_files,\n    compiler: str = "nvc",\n    flags=None,\n    timeout_seconds: int = 300,\n):\n    if flags is None:\n        flags = [\n            "-acc",\n            "-mp",\n            "-gpu=cc70",\n            "--diag_suppress",\n            "declared_but_not_referenced",\n        ]\n\n    print("\\n" + "=" * 50)\n    print(" COMPILING & EXECUTING STANDALONE REGIONS (OPENACC)")\n    print("=" * 50)\n\n    for target_id, c_file in generated_files:\n        exe_file = os.path.splitext(c_file)[0]\n        compile_cmd = [compiler] + flags + [c_file, "-o", exe_file]\n\n        print(f"\\n[Compiling Region {target_id}]: {\' \'.join(compile_cmd)}")\n\n        comp_process = subprocess.run(\n            compile_cmd,\n            stdout=subprocess.PIPE,\n            stderr=subprocess.PIPE,\n            text=True,\n        )\n\n        compiler_output = "\\n".join(\n            x for x in (\n                comp_process.stdout.strip(),\n                comp_process.stderr.strip(),\n            )\n            if x\n        )\n        if compiler_output:\n            print(f"[Compiler Output]:\\n{compiler_output}")\n\n        if comp_process.returncode != 0:\n            print(f"❌ Compilation failed for Region {target_id}!")\n            continue\n\n        print(f"[Running Region {target_id}]: {exe_file}")\n\n        try:\n            run_process = subprocess.run(\n                [os.path.abspath(exe_file)],\n                stdout=subprocess.PIPE,\n                stderr=subprocess.PIPE,\n                text=True,\n                timeout=timeout_seconds,\n            )\n        except subprocess.TimeoutExpired:\n            print(\n                f"❌ Execution timed out for Region {target_id} "\n                f"after {timeout_seconds} seconds."\n            )\n            continue\n\n        if run_process.returncode == 0:\n            print(f"✅ {run_process.stdout.strip()}")\n            if run_process.stderr.strip():\n                print(f"[Runtime stderr]:\\n{run_process.stderr.strip()}")\n        else:\n            print(f"❌ Execution failed for Region {target_id}!")\n            if run_process.stdout.strip():\n                print(run_process.stdout.strip())\n            if run_process.stderr.strip():\n                print(run_process.stderr.strip())\n\n\ndef main():\n    if len(sys.argv) < 2:\n        print("Usage: python generate_standalone_regions_openacc_FINAL.py <input_benchmark.c>")\n        sys.exit(1)\n\n    input_file = sys.argv[1]\n    if not os.path.isfile(input_file):\n        print(f"Error: input file not found: {input_file}")\n        sys.exit(1)\n\n    try:\n        content, functions, main_func, regions, bounds_map = parse_c_file(input_file)\n\n        print("Detected profitability regions:")\n        for r in regions:\n            line_no = content.count(\'\\n\', 0, r.start) + 1\n            print(\n                f"  Region {r.region_id}: line {line_no}, "\n                f"function {r.function.name}()"\n            )\n\n        generated = generate_standalone_files(\n            content,\n            functions,\n            main_func,\n            regions,\n            bounds_map,\n        )\n        compile_and_run_regions(generated)\n\n    except Exception as exc:\n        print(f"Error: {exc}")\n        sys.exit(1)\n\n\nif __name__ == "__main__":\n    main()'
 
-# ---------------------------------------------------------------------------
-# General configuration
-# ---------------------------------------------------------------------------
 
-STANDARD_VARS = {"i", "j", "k", "t"}
+def _load_embedded(source_text, label):
+    ns = {
+        "__name__": f"_capc_embedded_{label}",
+        "__file__": f"<embedded-{label}>",
+    }
+    code = compile(source_text, ns["__file__"], "exec")
+    exec(code, ns, ns)
+    return ns
 
 
-try:
-    resource.setrlimit(
-        resource.RLIMIT_STACK,
-        (resource.RLIM_INFINITY, resource.RLIM_INFINITY)
-    )
-except Exception:
-    pass
+PROF = _load_embedded(PROFILER_SOURCE, "profiler")
+GEN = _load_embedded(GENERATOR_SOURCE, "generator")
 
 
-# ===========================================================================
-# PART 1: REGION PARSING
-# ===========================================================================
+ISO_PATTERNS = {
+    "init": re.compile(r"GPU Initialization\s*:\s*([0-9.eE+-]+)\s+seconds"),
+    "h2d": re.compile(r"Transfer In\s*\(H2D\)\s*:\s*([0-9.eE+-]+)\s+seconds"),
+    "kernel": re.compile(r"Kernel Time\s*\(GPU\)\s*:\s*([0-9.eE+-]+)\s+seconds"),
+    "d2h": re.compile(r"Transfer Out\s*\(D2H\)\s*:\s*([0-9.eE+-]+)\s+seconds"),
+    "isolated": re.compile(r"Isolated Region Time\s*:\s*([0-9.eE+-]+)\s+seconds"),
+}
 
-def parse_regions(source_file):
-    """
-    Parse CAPC profitability regions using source line numbers.
 
-    Returns:
-        [
-            {
-                "id": 1,
-                "begin_line": ...,
-                "end_line": ...,
-                "count": 0,
-                "resident_time": 0.0,
-                "transfer_time": 0.0,
-                "isolated_time": None,
-                "isolated_h2d": None,
-                "isolated_kernel": None,
-                "isolated_d2h": None,
-            },
-            ...
-        ]
-    """
-    regions = []
-    current_region = None
-    region_id = 1
+def _profiler_metrics(reg):
+    count = max(int(reg.get("count", 0)), 1)
+    actual_count = int(reg.get("count", 0))
+    resident_total = float(reg.get("resident_time", 0.0))
+    init_time = float(reg.get("init_time", 0.0))
+    one_time = float(reg.get("one_time_transfer_time", 0.0))
+    recurring = float(reg.get("recurring_transfer_time", 0.0))
 
-    with open(source_file, "r") as f:
-        for line_num, line in enumerate(f, start=1):
-            line_str = line.strip()
+    avg_resident = resident_total / count
+    avg_recurring_observed = (resident_total + recurring) / count
 
-            if "#pragma capc profitability_region begin" in line_str:
-                current_region = {
-                    "id": region_id,
-                    "begin_line": line_num,
-                    "end_line": None,
-                    "count": 0,
-                    "resident_time": 0.0,
-                    "transfer_time": 0.0,
-                    "isolated_time": None,
-                    "isolated_h2d": None,
-                    "isolated_kernel": None,
-                    "isolated_d2h": None,
-                }
+    # IMPORTANT: one-time initialization/setup is NOT amortized.
+    avg_observed = init_time + one_time + avg_recurring_observed
 
-            elif (
-                "#pragma capc profitability_region end" in line_str
-                and current_region is not None
-            ):
-                current_region["end_line"] = line_num
-                regions.append(current_region)
-                region_id += 1
-                current_region = None
-
-    return regions
-
-
-def get_associated_region_id(line_num, regions):
-    """
-    Associate an OpenACC transfer/kernel line with a CAPC region.
-
-    Policy retained from the resident/observed script:
-      1. Inside a region              -> that region
-      2. Before first region          -> first region
-      3. Between two regions          -> preceding region
-      4. After final region           -> final region
-    """
-    if not regions:
-        return 1
-
-    for reg in regions:
-        if reg["begin_line"] <= line_num <= reg["end_line"]:
-            return reg["id"]
-
-    if line_num < regions[0]["begin_line"]:
-        return regions[0]["id"]
-
-    for i in range(len(regions) - 1):
-        if regions[i]["end_line"] < line_num < regions[i + 1]["begin_line"]:
-            return regions[i]["id"]
-
-    return regions[-1]["id"]
-
-
-# ===========================================================================
-# PART 2: RESIDENT + OBSERVED TIMING
-# ===========================================================================
-
-def consume_statement(lines, idx):
-    """
-    Consume the complete C statement/block following an OpenACC compute pragma.
-
-    Returns the first source-line index after that statement/block.
-    """
-    n = len(lines)
-
-    while idx < n:
-        line_str = lines[idx].strip()
-
-        if not line_str or line_str.startswith("//") or line_str.startswith("/*"):
-            idx += 1
-            continue
-
-        if line_str.startswith("#pragma"):
-            idx += 1
-            continue
-
-        if "{" in line_str:
-            brace_depth = 0
-
-            while idx < n:
-                current = lines[idx]
-                brace_depth += current.count("{") - current.count("}")
-                idx += 1
-
-                if brace_depth <= 0:
-                    break
-
-            return idx
-
-        if any(line_str.startswith(kw) for kw in ["for", "while", "if", "do"]):
-            idx += 1
-            return consume_statement(lines, idx)
-
-        # Ordinary statement.
-        while idx < n:
-            current = lines[idx]
-            idx += 1
-            if ";" in current:
-                break
-
-        return idx
-
-    return idx
-
-
-def instrument_openacc_source(source_path, temp_path, regions):
-    """
-    Instrument the original OpenACC program.
-
-    Kernel timing:
-        timer
-        #pragma acc parallel/kernels/serial ...
-        ...
-        #pragma acc wait
-        timer
-
-    Transfer timing:
-        timer
-        #pragma acc enter data / exit data / update ...
-        #pragma acc wait
-        timer
-    """
-    with open(source_path, "r") as f:
-        lines = f.readlines()
-
-    instrumented = [
-        "#include <omp.h>\n",
-        "#include <stdio.h>\n",
-        "#include <openacc.h>\n",
-        "static double _capc_dt0, _capc_dt1;\n",
-        "static double _capc_k0, _capc_k1;\n\n",
-    ]
-
-    i = 0
-    n = len(lines)
-
-    while i < n:
-        line = lines[i]
-        line_str = line.strip()
-        line_num = i + 1
-
-        # ------------------------------------------------------------------
-        # Explicit OpenACC data movement
-        # ------------------------------------------------------------------
-        if (
-            "#pragma acc" in line_str
-            and any(
-                keyword in line_str
-                for keyword in ["enter data", "exit data", "update"]
-            )
-        ):
-            reg_id = get_associated_region_id(line_num, regions)
-
-            instrumented.append("  _capc_dt0 = omp_get_wtime();\n")
-            instrumented.append(line)
-            instrumented.append("  #pragma acc wait\n")
-            instrumented.append("  _capc_dt1 = omp_get_wtime();\n")
-            instrumented.append(
-                f'  printf("[PROFILER] transfer region:{reg_id} '
-                f'line:{line_num} | Transfer Time = %.9f s\\n", '
-                f'_capc_dt1 - _capc_dt0);\n'
-            )
-
-            i += 1
-            continue
-
-        # ------------------------------------------------------------------
-        # OpenACC compute construct
-        # ------------------------------------------------------------------
-        if (
-            "#pragma acc" in line_str
-            and any(
-                keyword in line_str
-                for keyword in ["parallel", "kernels", "serial"]
-            )
-        ):
-            reg_id = get_associated_region_id(line_num, regions)
-
-            instrumented.append("  _capc_k0 = omp_get_wtime();\n")
-            instrumented.append(line)
-
-            i += 1
-            end_idx = consume_statement(lines, i)
-
-            while i < end_idx:
-                instrumented.append(lines[i])
-                i += 1
-
-            instrumented.append("  #pragma acc wait\n")
-            instrumented.append("  _capc_k1 = omp_get_wtime();\n")
-            instrumented.append(
-                f'  printf("[PROFILER] kernel region:{reg_id} '
-                f'line:{line_num} | Kernel Execution Time = %.9f s\\n", '
-                f'_capc_k1 - _capc_k0);\n'
-            )
-
-            continue
-
-        instrumented.append(line)
-        i += 1
-
-    with open(temp_path, "w") as f:
-        f.writelines(instrumented)
-
-
-def compile_openacc_program(source_file, exec_name, gpu_arch="cc70"):
-    """Compile the instrumented original OpenACC program."""
-    compile_cmd = [
-        "nvc",
-        "-acc",
-        "-mp",
-        f"-gpu={gpu_arch}",
-        "-Minfo=accel",
-        source_file,
-        "-o",
-        exec_name,
-    ]
-
-    print(f"[*] Compiling original instrumented program:")
-    print("    " + " ".join(compile_cmd))
-
-    result = subprocess.run(
-        compile_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    if result.stderr.strip():
-        print(result.stderr.strip())
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Compilation failed for instrumented source:\n{source_file}"
-        )
-
-
-def run_executable(exec_path):
-    """Execute a binary and capture stdout/stderr."""
-    result = subprocess.run(
-        [os.path.abspath(exec_path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    return result.stdout, result.stderr, result.returncode
-
-
-def process_profiler_output(stdout_str, stderr_str, returncode, regions):
-    """
-    Parse resident/observed profiler logs and aggregate times.
-    """
-    combined_log = stdout_str + "\n" + stderr_str
-
-    pattern = re.compile(
-        r"\[PROFILER\]\s+"
-        r"(kernel|transfer)\s+"
-        r"region:(\d+)\s+"
-        r"line:(\d+)\s+\|\s+"
-        r"(.*?)\s+=\s+"
-        r"([\d.eE+\-]+)\s+s"
-    )
-
-    matched_events = 0
-    region_map = {reg["id"]: reg for reg in regions}
-
-    for line in combined_log.splitlines():
-        match = pattern.search(line)
-
-        if not match:
-            continue
-
-        matched_events += 1
-
-        event_category = match.group(1)
-        region_id = int(match.group(2))
-        duration = float(match.group(5))
-
-        if region_id not in region_map:
-            continue
-
-        reg = region_map[region_id]
-
-        if event_category == "kernel":
-            reg["resident_time"] += duration
-            reg["count"] += 1
-
-        elif event_category == "transfer":
-            reg["transfer_time"] += duration
-
-    if matched_events == 0:
-        print("[!] Warning: no [PROFILER] events were detected.")
-        print(f"[!] Original executable return code: {returncode}")
-
-
-# ===========================================================================
-# PART 3: STANDALONE / ISOLATED REGION GENERATION
-# ===========================================================================
-
-def get_array_bounds_map(full_code):
-    """
-    Build:
-        variable_name -> OpenACC array section
-
-    Example:
-        a -> a[0:N]
-    """
-    bounds_map = {}
-
-    clause_matches = re.findall(
-        r"\b(?:create|copyin|copyout|copy|present|pcopy|pcopyin|pcopyout)"
-        r"\s*\(([^)]+)\)",
-        full_code,
-        re.IGNORECASE,
-    )
-
-    for match in clause_matches:
-        items = [item.strip() for item in match.split(",")]
-
-        for item in items:
-            var_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)", item)
-
-            if var_match:
-                var_name = var_match.group(1)
-
-                if "[" in item and var_name not in bounds_map:
-                    bounds_map[var_name] = item
-
-    return bounds_map
-
-
-def get_target_region_array_specs(target_block, bounds_map):
-    """
-    Determine arrays referenced by a target profitability region.
-
-    First preference:
-        arrays explicitly appearing in OpenACC clauses.
-
-    Fallback:
-        indexed array references in the target block.
-    """
-    target_vars = []
-
-    clause_matches = re.findall(
-        r"\b(?:create|copyin|copyout|copy|present|pcopy|pcopyin|pcopyout)"
-        r"\s*\(([^)]+)\)",
-        target_block,
-        re.IGNORECASE,
-    )
-
-    for match in clause_matches:
-        items = [item.strip() for item in match.split(",")]
-
-        for item in items:
-            var_match = re.match(r"^([a-zA-Z_][a-zA-Z0-9_]*)", item)
-
-            if var_match:
-                var_name = var_match.group(1)
-
-                if var_name not in target_vars:
-                    target_vars.append(var_name)
-
-    if not target_vars:
-        indexed_vars = re.findall(
-            r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\[",
-            target_block,
-        )
-
-        for var_name in indexed_vars:
-            if var_name in bounds_map and var_name not in target_vars:
-                target_vars.append(var_name)
-
-    specs = []
-
-    for variable in target_vars:
-        if variable in bounds_map:
-            specs.append(bounds_map[variable])
-        else:
-            specs.append(variable)
-
-    return specs, target_vars
-
-
-def is_block_unclosed_from_line(start_idx, lines):
-    depth = 0
-    has_opened = False
-
-    for i in range(start_idx, len(lines)):
-        line = lines[i]
-
-        opened = line.count("{")
-        closed = line.count("}")
-
-        if opened > 0:
-            has_opened = True
-
-        depth += opened - closed
-
-        if has_opened and depth <= 0:
-            return False
-
-    return True
-
-
-def sanitize_c_segment(code_str, state=None):
-    """
-    Clean fragments copied from the original main() into generated
-    standalone programs.
-
-    This preserves the logic from the standalone script while avoiding
-    dangling profitability markers, declarations of standard loop indices,
-    unmatched control blocks, and orphaned preprocessor directives.
-    """
-    if state is None:
-        state = {"suppressed_braces": 0}
-
-    lines = code_str.splitlines()
-    clean_lines = []
-
-    if_stack = 0
-    local_loop_depth = 0
-
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-
-        if "profitability_region" in stripped:
-            continue
-
-        decl_standalone_match = re.match(
-            r"^\s*(int|double|float|long)\s+([a-zA-Z0-9_,\s]+)\s*;\s*$",
-            line,
-        )
-
-        if decl_standalone_match:
-            variables = [
-                value.strip()
-                for value in decl_standalone_match.group(2).split(",")
-            ]
-
-            if all(variable in STANDARD_VARS for variable in variables):
-                continue
-
-        decl_init_match = re.match(
-            r"^\s*(int|double|float|long)\s+"
-            r"([a-zA-Z0-9_]+)\s*=(.*);",
-            line,
-        )
-
-        if decl_init_match:
-            var_name = decl_init_match.group(2)
-            val_part = decl_init_match.group(3)
-
-            if var_name in STANDARD_VARS:
-                line = f"    {var_name} ={val_part};"
-                stripped = line.strip()
-
-        if re.match(r"^\s*(for|while|do|if)\b", stripped):
-            if is_block_unclosed_from_line(idx, lines):
-                if "{" in stripped:
-                    state["suppressed_braces"] += stripped.count("{")
-                continue
-
-        if stripped == "{":
-            if idx > 0 and re.match(
-                r"^\s*(for|while|do|if)\b",
-                lines[idx - 1],
-            ):
-                if is_block_unclosed_from_line(idx, lines):
-                    state["suppressed_braces"] += 1
-                    continue
-
-        if stripped.startswith("}"):
-            if state["suppressed_braces"] > 0:
-                state["suppressed_braces"] -= 1
-                remainder = stripped[1:].strip()
-
-                if not remainder:
-                    continue
-
-                line = remainder
-                stripped = line.strip()
-
-        if (
-            re.match(r"^\s*(for|while|do)\b", stripped)
-            and not is_block_unclosed_from_line(idx, lines)
-        ):
-            local_loop_depth += stripped.count("{")
-
-        if "}" in stripped and local_loop_depth > 0:
-            local_loop_depth -= stripped.count("}")
-
-            if local_loop_depth < 0:
-                local_loop_depth = 0
-
-        if (
-            stripped in ("break;", "continue;")
-            or re.match(r"^\s*(break|continue)\s*;\s*$", stripped)
-        ):
-            if local_loop_depth == 0:
-                clean_lines.append(
-                    f"    // {stripped}  "
-                    f"/* Skipped break/continue outside loop */"
-                )
-                continue
-
-        if re.match(r"^\s*#\s*(if|ifdef|ifndef)\b", stripped):
-            if_stack += 1
-            clean_lines.append(line)
-
-        elif re.match(r"^\s*#\s*endif\b", stripped):
-            if if_stack > 0:
-                if_stack -= 1
-                clean_lines.append(line)
-            else:
-                clean_lines.append(
-                    f"// {line}  /* Skipped orphaned #endif */"
-                )
-
-        elif re.match(r"^\s*#\s*(else|elif)\b", stripped):
-            if if_stack > 0:
-                clean_lines.append(line)
-            else:
-                clean_lines.append(
-                    f"// {line}  "
-                    f"/* Skipped orphaned preprocessor directive */"
-                )
-
-        else:
-            clean_lines.append(line)
-
-    while if_stack > 0:
-        clean_lines.append(
-            "#endif /* Auto-closed for standalone segment balance */"
-        )
-        if_stack -= 1
-
-    return "\n".join(clean_lines)
-
-
-def parse_c_file_for_isolated(file_path):
-    """
-    Parse original source for standalone-region generation.
-    """
-    with open(file_path, "r") as f:
-        content = f.read()
-
-    bounds_map = get_array_bounds_map(content)
-
-    region_pattern = re.compile(
-        r"(#pragma\s+capc\s+profitability_region\s+begin[^\n]*\n)"
-        r"(.*?)"
-        r"(#pragma\s+capc\s+profitability_region\s+end[^\n]*)",
-        re.DOTALL | re.IGNORECASE,
-    )
-
-    region_matches = list(region_pattern.finditer(content))
-
-    if not region_matches:
-        raise ValueError(
-            "No '#pragma capc profitability_region begin/end' markers found."
-        )
-
-    main_match = re.search(
-        r"(int\s+main\s*\([^)]*\)\s*\{)",
-        content,
-    )
-
-    if not main_match:
-        raise ValueError("Could not locate main() in input file.")
-
-    main_start = main_match.end()
-    header_code = content[:main_match.start()]
-    main_opening = main_match.group(1)
-    main_body = content[main_start:]
-
-    parsed_regions = []
-
-    for idx, match in enumerate(region_matches, start=1):
-        begin_line = match.group(1).strip()
-        body_code = match.group(2).strip()
-        end_line = match.group(3).strip()
-
-        id_match = re.search(
-            r"begin\s*(?:\(\s*(\w+)\s*\)|\s+(\w+))",
-            begin_line,
-            re.IGNORECASE,
-        )
-
-        if id_match:
-            region_id = id_match.group(1) or id_match.group(2)
-        else:
-            region_id = str(idx)
-
-        full_region_block = (
-            f"    {begin_line}\n"
-            f"    {body_code}\n"
-            f"    {end_line}"
-        )
-
-        is_in_main = match.start() >= main_match.start()
-
-        parsed_regions.append(
-            (
-                region_id,
-                full_region_block,
-                match.start(),
-                match.end(),
-                is_in_main,
-            )
-        )
-
-    main_regions = [region for region in parsed_regions if region[4]]
-
-    raw_main_segments = []
-    last_pos = 0
-
-    for _, _, start_pos, end_pos, _ in main_regions:
-        rel_start = start_pos - main_start
-        rel_end = end_pos - main_start
-
-        raw_main_segments.append(
-            main_body[last_pos:rel_start]
-        )
-
-        last_pos = rel_end
-
-    raw_main_segments.append(main_body[last_pos:])
-
-    return (
-        header_code,
-        main_opening,
-        raw_main_segments,
-        parsed_regions,
-        main_regions,
-        bounds_map,
-    )
-
-
-def clean_directory(output_dir):
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-
-    os.makedirs(output_dir, exist_ok=True)
-
-
-def generate_standalone_files(
-    header_code,
-    main_opening,
-    raw_main_segments,
-    parsed_regions,
-    main_regions,
-    bounds_map,
-    output_dir,
-):
-    """
-    Generate one standalone C source for every profitability region.
-    """
-    clean_directory(output_dir)
-
-    all_global_specs = [bounds_map[v] for v in bounds_map]
-    global_specs_str = (
-        ", ".join(all_global_specs)
-        if all_global_specs
-        else ""
-    )
-
-    generated_files = []
-
-    for target_index, (
-        target_id,
-        target_block,
-        start_pos,
-        end_pos,
-        is_in_main,
-    ) in enumerate(parsed_regions):
-
-        filename = os.path.join(
-            output_dir,
-            f"region_{target_id}_standalone.c",
-        )
-
-        main_preceding = [
-            region
-            for region in main_regions
-            if region[2] < start_pos
-        ]
-
-        m_count = len(main_preceding)
-        has_prior_dependencies = m_count > 0
-
-        state = {"suppressed_braces": 0}
-
-        array_specs, target_var_names = get_target_region_array_specs(
-            target_block,
-            bounds_map,
-        )
-
-        target_pragma_lower = target_block.lower()
-
-        # ---------------------------------------------------------------
-        # Decide which arrays need host -> device movement before target.
-        # ---------------------------------------------------------------
-        pre_copyin_specs = []
-
-        for spec in array_specs:
-            var_name = spec.split("[")[0].strip()
-
-            is_copyout = (
-                "copyout(" in target_pragma_lower
-                and var_name in target_pragma_lower
-            )
-
-            is_copyin_or_used = any(
-                clause in target_pragma_lower
-                for clause in [
-                    f"copyin({var_name}",
-                    f"copy({var_name}",
-                    f"present({var_name}",
-                ]
-            )
-
-            if not (is_copyout and not is_copyin_or_used):
-                pre_copyin_specs.append(spec)
-
-        pre_copyin_str = (
-            ", ".join(pre_copyin_specs)
-            if pre_copyin_specs
-            else ""
-        )
-
-        with open(filename, "w") as f:
-            f.write("#define _GNU_SOURCE\n")
-            f.write("#define _POSIX_C_SOURCE 199309L\n")
-            f.write("#include <time.h>\n")
-            f.write("#include <stdio.h>\n\n")
-
-            f.write(header_code + "\n")
-            f.write(main_opening + "\n\n")
-
-            f.write("    int i, j, k, t;\n")
-            f.write("    struct timespec t_start, t_end;\n")
-            f.write(
-                "    double t_in = 0.0, "
-                "t_gpu = 0.0, "
-                "t_out = 0.0;\n\n"
-            )
-
-            f.write(
-                "    /* === STAGE 1 & 2: "
-                "Setup + prerequisite regions === */\n"
-            )
-
-            has_enter_data_in_setup = False
-
-            for k in range(m_count):
-                if k < len(raw_main_segments):
-                    seg_clean = sanitize_c_segment(
-                        raw_main_segments[k],
-                        state,
-                    ).strip()
-
-                    if seg_clean:
-                        if "enter data" in seg_clean.lower():
-                            has_enter_data_in_setup = True
-
-                        f.write(f"    {seg_clean}\n\n")
-
-                f.write(
-                    f"    /* Dependent Region "
-                    f"{main_preceding[k][0]} */\n"
-                )
-                f.write(f"    {main_preceding[k][1]}\n")
-
-                if not main_preceding[k][1].strip().endswith(
-                    "#pragma acc wait"
-                ):
-                    f.write("    #pragma acc wait\n\n")
-                else:
-                    f.write("\n")
-
-            if m_count < len(raw_main_segments):
-                seg_clean = sanitize_c_segment(
-                    raw_main_segments[m_count],
-                    state,
-                ).strip()
-
-                if seg_clean:
-                    if "enter data" in seg_clean.lower():
-                        has_enter_data_in_setup = True
-
-                    f.write(f"    {seg_clean}\n\n")
-
-            # -----------------------------------------------------------
-            # Device allocation when setup has not already done it.
-            # -----------------------------------------------------------
-            if (
-                global_specs_str
-                and not has_prior_dependencies
-                and not has_enter_data_in_setup
-            ):
-                f.write(
-                    "    /* Ensure array allocation on device */\n"
-                )
-                f.write(
-                    f"    #pragma acc enter data "
-                    f"create({global_specs_str})\n"
-                )
-                f.write("    #pragma acc wait\n\n")
-
-            # -----------------------------------------------------------
-            # Transfer In
-            # -----------------------------------------------------------
-            if pre_copyin_str and not has_prior_dependencies:
-                f.write(
-                    "    /* === Transfer In (Host -> Device) === */\n"
-                )
-                f.write(
-                    "    clock_gettime(CLOCK_MONOTONIC, &t_start);\n"
-                )
-                f.write(
-                    f"    #pragma acc update "
-                    f"device({pre_copyin_str})\n"
-                )
-                f.write("    #pragma acc wait\n")
-                f.write(
-                    "    clock_gettime(CLOCK_MONOTONIC, &t_end);\n"
-                )
-                f.write(
-                    "    t_in = "
-                    "(t_end.tv_sec - t_start.tv_sec) + "
-                    "(t_end.tv_nsec - t_start.tv_nsec) / 1e9;\n\n"
-                )
-            else:
-                f.write(
-                    "    /* Pre-timing copyin skipped: "
-                    "write-only/no input arrays or prior dependencies. */\n\n"
-                )
-
-            # -----------------------------------------------------------
-            # Target kernel
-            # -----------------------------------------------------------
-            f.write(
-                f"    /* === Isolated kernel timing: "
-                f"Region {target_id} === */\n"
-            )
-            f.write(
-                "    clock_gettime(CLOCK_MONOTONIC, &t_start);\n\n"
-            )
-
-            f.write(f"    {target_block}\n\n")
-
-            f.write("    #pragma acc wait\n")
-            f.write(
-                "    clock_gettime(CLOCK_MONOTONIC, &t_end);\n"
-            )
-            f.write(
-                "    t_gpu = "
-                "(t_end.tv_sec - t_start.tv_sec) + "
-                "(t_end.tv_nsec - t_start.tv_nsec) / 1e9;\n\n"
-            )
-
-            # -----------------------------------------------------------
-            # Transfer Out
-            # -----------------------------------------------------------
-            has_explicit_copyout = any(
-                clause in target_pragma_lower
-                for clause in ["copyout", "copy("]
-            )
-
-            if not has_explicit_copyout and array_specs:
-                specs_str = ", ".join(array_specs)
-
-                f.write(
-                    "    /* === Transfer Out (Device -> Host) === */\n"
-                )
-                f.write(
-                    "    clock_gettime(CLOCK_MONOTONIC, &t_start);\n"
-                )
-                f.write(
-                    f"    #pragma acc update self({specs_str})\n"
-                )
-                f.write("    #pragma acc wait\n")
-                f.write(
-                    "    clock_gettime(CLOCK_MONOTONIC, &t_end);\n"
-                )
-                f.write(
-                    "    t_out = "
-                    "(t_end.tv_sec - t_start.tv_sec) + "
-                    "(t_end.tv_nsec - t_start.tv_nsec) / 1e9;\n\n"
-                )
-            else:
-                f.write(
-                    "    /* Copyout skipped: explicit copyout/copy "
-                    "or no detected array sections. */\n\n"
-                )
-
-            # -----------------------------------------------------------
-            # Machine-readable output for Python parser
-            # -----------------------------------------------------------
-            f.write(
-                "    double t_total = t_in + t_gpu + t_out;\n\n"
-            )
-
-            f.write(
-                f'    printf("[ISOLATED] region:{target_id} '
-                f'| H2D = %.9f s '
-                f'| Kernel = %.9f s '
-                f'| D2H = %.9f s '
-                f'| Total = %.9f s\\n", '
-                f't_in, t_gpu, t_out, t_total);\n'
-            )
-
-            f.write("    return 0;\n")
-            f.write("}\n")
-
-        generated_files.append((str(target_id), filename))
-
-    return generated_files
-
-
-# ===========================================================================
-# PART 4: COMPILE + RUN ISOLATED REGIONS
-# ===========================================================================
-
-def compile_isolated_region(
-    c_file,
-    gpu_arch="cc70",
-):
-    exe_file = os.path.splitext(c_file)[0]
-
-    compile_cmd = [
-        "nvc",
-        "-acc",
-        "-mp",
-        f"-gpu={gpu_arch}",
-        "--diag_suppress",
-        "declared_but_not_referenced",
-        c_file,
-        "-o",
-        exe_file,
-    ]
-
-    print("    " + " ".join(compile_cmd))
-
-    result = subprocess.run(
-        compile_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    if result.stderr.strip():
-        print(result.stderr.strip())
-
-    if result.returncode != 0:
-        return None
-
-    return exe_file
-
-
-def parse_isolated_output(text):
-    pattern = re.compile(
-        r"\[ISOLATED\]\s+region:(\S+)\s+\|\s+"
-        r"H2D\s*=\s*([\d.eE+\-]+)\s+s\s+\|\s+"
-        r"Kernel\s*=\s*([\d.eE+\-]+)\s+s\s+\|\s+"
-        r"D2H\s*=\s*([\d.eE+\-]+)\s+s\s+\|\s+"
-        r"Total\s*=\s*([\d.eE+\-]+)\s+s"
-    )
-
-    match = pattern.search(text)
-
-    if not match:
-        return None
+    total_observed = init_time + one_time + recurring + resident_total
 
     return {
-        "region_id": match.group(1),
-        "h2d": float(match.group(2)),
-        "kernel": float(match.group(3)),
-        "d2h": float(match.group(4)),
-        "total": float(match.group(5)),
+        "invocations": actual_count,
+        "total_res": resident_total,
+        "avg_res": avg_resident,
+        "total_obs": total_observed,
+        "avg_obs": avg_observed,
+        "obs_init": init_time,
+        "obs_one_time_xfer": one_time,
+        "obs_recurring_xfer_total": recurring,
     }
 
 
-def run_isolated_regions(
-    generated_files,
-    regions,
-    gpu_arch="cc70",
-    isolated_runs=1,
-):
-    """
-    Compile and execute every standalone region.
+def run_resident_observed(source_path, gpu_arch, timeout):
+    print("\n" + "=" * 88)
+    print(" PHASE 1: RESIDENT + OBSERVED TIMING (OPENACC ORIGINAL EXECUTION)")
+    print("=" * 88)
 
-    If --isolated-runs N is used, run the standalone executable N times
-    and store the arithmetic mean of H2D, kernel, D2H and total.
-    """
-    region_map = {str(reg["id"]): reg for reg in regions}
-
-    print("\n" + "=" * 76)
-    print(" ISOLATED REGION COMPILATION / EXECUTION")
-    print("=" * 76)
-
-    for target_id, c_file in generated_files:
-        print(f"\n[*] Isolated Region {target_id}")
-        print("[*] Compiling:")
-
-        exe_file = compile_isolated_region(
-            c_file,
-            gpu_arch=gpu_arch,
-        )
-
-        if exe_file is None:
-            print(
-                f"[!] Region {target_id}: standalone compilation failed."
-            )
-            continue
-
-        measurements = []
-
-        for run_index in range(isolated_runs):
-            stdout_str, stderr_str, returncode = run_executable(exe_file)
-            combined = stdout_str + "\n" + stderr_str
-
-            if returncode != 0:
-                print(
-                    f"[!] Region {target_id}: run "
-                    f"{run_index + 1} failed with code {returncode}."
-                )
-
-                if stderr_str.strip():
-                    print(stderr_str.strip())
-
-                continue
-
-            parsed = parse_isolated_output(combined)
-
-            if parsed is None:
-                print(
-                    f"[!] Region {target_id}: isolated timing "
-                    f"output could not be parsed."
-                )
-                continue
-
-            measurements.append(parsed)
-
-        if not measurements:
-            continue
-
-        avg_h2d = sum(x["h2d"] for x in measurements) / len(measurements)
-        avg_kernel = (
-            sum(x["kernel"] for x in measurements)
-            / len(measurements)
-        )
-        avg_d2h = sum(x["d2h"] for x in measurements) / len(measurements)
-        avg_total = (
-            sum(x["total"] for x in measurements)
-            / len(measurements)
-        )
-
-        if target_id in region_map:
-            reg = region_map[target_id]
-            reg["isolated_h2d"] = avg_h2d
-            reg["isolated_kernel"] = avg_kernel
-            reg["isolated_d2h"] = avg_d2h
-            reg["isolated_time"] = avg_total
-
-        print(
-            f"    H2D={avg_h2d:.9f} s, "
-            f"Kernel={avg_kernel:.9f} s, "
-            f"D2H={avg_d2h:.9f} s, "
-            f"Isolated={avg_total:.9f} s"
-        )
-
-
-# ===========================================================================
-# PART 5: FINAL REPORT
-# ===========================================================================
-
-def format_time(value):
-    if value is None:
-        return "N/A"
-
-    return f"{value:.6f}"
-
-
-def print_results(regions):
-    """
-    Final combined CAPC report.
-
-    Resident:
-        kernel time from original execution.
-
-    Observed:
-        resident + original-program explicit transfers.
-
-    Isolated:
-        H2D + standalone target kernel + D2H.
-    """
-    header = (
-        f"{'Region':<8} | "
-        f"{'Lines':<11} | "
-        f"{'Calls':<8} | "
-        f"{'Total Res(s)':<13} | "
-        f"{'Avg Res(s)':<12} | "
-        f"{'Total Obs(s)':<13} | "
-        f"{'Avg Obs(s)':<12} | "
-        f"{'Isolated(s)':<12}"
-    )
-
-    divider = "-" * len(header)
-
-    print("\n" + divider)
-    print(
-        "             CAPC PROFITABILITY REGION TIMING REPORT "
-        "(OPENACC)"
-    )
-    print(divider)
-    print(header)
-    print(divider)
-
-    total_resident = 0.0
-    total_observed = 0.0
-    total_invocations = 0
-
-    for reg in regions:
-        count_for_average = max(reg["count"], 1)
-
-        observed_time = (
-            reg["resident_time"]
-            + reg["transfer_time"]
-        )
-
-        avg_resident = (
-            reg["resident_time"]
-            / count_for_average
-        )
-
-        avg_observed = (
-            observed_time
-            / count_for_average
-        )
-
-        total_resident += reg["resident_time"]
-        total_observed += observed_time
-        total_invocations += reg["count"]
-
-        line_range = (
-            f"{reg['begin_line']}-"
-            f"{reg['end_line']}"
-        )
-
-        print(
-            f"Region {reg['id']:<1} | "
-            f"{line_range:<11} | "
-            f"{reg['count']:<8} | "
-            f"{reg['resident_time']:<13.6f} | "
-            f"{avg_resident:<12.6f} | "
-            f"{observed_time:<13.6f} | "
-            f"{avg_observed:<12.6f} | "
-            f"{format_time(reg['isolated_time']):<12}"
-        )
-
-    print(divider)
-
-    avg_total_resident = (
-        total_resident / max(total_invocations, 1)
-    )
-
-    avg_total_observed = (
-        total_observed / max(total_invocations, 1)
-    )
-
-    print(
-        f"{'TOTAL':<8} | "
-        f"{'-':<11} | "
-        f"{total_invocations:<8} | "
-        f"{total_resident:<13.6f} | "
-        f"{avg_total_resident:<12.6f} | "
-        f"{total_observed:<13.6f} | "
-        f"{avg_total_observed:<12.6f} | "
-        f"{'-':<12}"
-    )
-
-    print(divider)
-
-    print("\nIsolated timing breakdown:")
-    breakdown_header = (
-        f"{'Region':<8} | "
-        f"{'H2D(s)':<12} | "
-        f"{'Kernel(s)':<12} | "
-        f"{'D2H(s)':<12} | "
-        f"{'Isolated(s)':<12}"
-    )
-
-    breakdown_divider = "-" * len(breakdown_header)
-
-    print(breakdown_divider)
-    print(breakdown_header)
-    print(breakdown_divider)
-
-    for reg in regions:
-        print(
-            f"Region {reg['id']:<1} | "
-            f"{format_time(reg['isolated_h2d']):<12} | "
-            f"{format_time(reg['isolated_kernel']):<12} | "
-            f"{format_time(reg['isolated_d2h']):<12} | "
-            f"{format_time(reg['isolated_time']):<12}"
-        )
-
-    print(breakdown_divider)
-
-
-# ===========================================================================
-# MAIN
-# ===========================================================================
-
-def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Combined CAPC OpenACC profiler for Resident, "
-            "Observed and Isolated profitability-region timing."
-        )
-    )
-
-    parser.add_argument(
-        "source",
-        help="Path to OpenACC C source file",
-    )
-
-    parser.add_argument(
-        "--gpu",
-        default="cc70",
-        help="GPU architecture passed to nvc (default: cc70)",
-    )
-
-    parser.add_argument(
-        "--isolated-runs",
-        type=int,
-        default=1,
-        help=(
-            "Number of executions of each standalone region "
-            "to average (default: 1)"
-        ),
-    )
-
-    parser.add_argument(
-        "--keep-generated",
-        action="store_true",
-        help="Keep generated standalone C files and binaries",
-    )
-
-    args = parser.parse_args()
-
-    if args.isolated_runs < 1:
-        parser.error("--isolated-runs must be >= 1")
-
-    source_path = os.path.abspath(args.source)
-
-    if not os.path.exists(source_path):
-        print(
-            f"Error: source file '{args.source}' does not exist.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    work_dir = os.path.dirname(source_path)
-    source_base = os.path.splitext(
-        os.path.basename(source_path)
-    )[0]
-
-    # ------------------------------------------------------------------
-    # Parse source regions once.
-    # ------------------------------------------------------------------
-    regions = parse_regions(source_path)
-
+    regions = PROF["parse_regions"](source_path)
     if not regions:
-        print(
-            "Error: no '#pragma capc profitability_region' "
-            "blocks found.",
-            file=sys.stderr,
+        raise RuntimeError(
+            "No '#pragma capc profitability_region' blocks found in source file."
         )
-        sys.exit(1)
 
-    print(f"[*] Source: {source_path}")
-    print(f"[*] Detected CAPC regions: {len(regions)}")
-    print(f"[*] GPU architecture: {args.gpu}")
-
-    # ------------------------------------------------------------------
-    # Resident + Observed
-    # ------------------------------------------------------------------
-    print("\n" + "=" * 76)
-    print(" RESIDENT + OBSERVED PROFILING")
-    print("=" * 76)
-
-    temp_fd, instrumented_path = tempfile.mkstemp(
-        suffix="_capc_profiled.c",
-        dir=work_dir,
+    work_dir = os.path.dirname(source_path) or "."
+    temp_fd, temp_source = tempfile.mkstemp(
+        prefix="capc_profile_", suffix=".c", dir=work_dir
     )
     os.close(temp_fd)
 
-    resident_exec_path = os.path.join(
+    exec_path = os.path.join(
         work_dir,
-        f".{source_base}_capc_profiled",
-    )
-
-    standalone_dir = os.path.join(
-        work_dir,
-        f".{source_base}_standalone_regions",
+        f".capc_profile_{os.getpid()}_{os.path.splitext(os.path.basename(source_path))[0]}",
     )
 
     try:
-        instrument_openacc_source(
-            source_path,
-            instrumented_path,
-            regions,
+        PROF["instrument_openacc_source"](source_path, temp_source, regions)
+        PROF["compile_openacc_program"](
+            temp_source,
+            exec_path,
+            gpu_arch=gpu_arch,
         )
 
-        compile_openacc_program(
-            instrumented_path,
-            resident_exec_path,
-            gpu_arch=args.gpu,
-        )
-
-        print("\n[*] Running original instrumented program...")
-
-        stdout_str, stderr_str, returncode = run_executable(
-            resident_exec_path
+        stdout_str, stderr_str, returncode = PROF["run_executable"](
+            exec_path,
+            timeout=timeout,
         )
 
         if returncode != 0:
-            print(
-                f"[!] Original instrumented program returned "
-                f"code {returncode}."
-            )
+            msg = stderr_str.strip() or stdout_str.strip() or f"return code {returncode}"
+            raise RuntimeError(f"Profiled program execution failed: {msg}")
 
-            if stderr_str.strip():
-                print(stderr_str.strip())
-
-        process_profiler_output(
+        PROF["process_profiler_output"](
             stdout_str,
             stderr_str,
             returncode,
             regions,
         )
 
-        # --------------------------------------------------------------
-        # Isolated
-        # --------------------------------------------------------------
-        (
-            header_code,
-            main_opening,
-            raw_main_segments,
-            parsed_regions,
-            main_regions,
-            bounds_map,
-        ) = parse_c_file_for_isolated(source_path)
+        result = {}
+        for reg in regions:
+            metrics = _profiler_metrics(reg)
+            metrics.update(
+                {
+                    "region": int(reg["id"]),
+                    "begin_line": int(reg["begin_line"]),
+                    "end_line": int(reg["end_line"]),
+                    "lines": f"{reg['begin_line']}-{reg['end_line']}",
+                }
+            )
+            result[int(reg["id"])] = metrics
 
-        generated_files = generate_standalone_files(
-            header_code,
-            main_opening,
-            raw_main_segments,
-            parsed_regions,
-            main_regions,
-            bounds_map,
-            standalone_dir,
-        )
-
-        run_isolated_regions(
-            generated_files,
-            regions,
-            gpu_arch=args.gpu,
-            isolated_runs=args.isolated_runs,
-        )
-
-        # --------------------------------------------------------------
-        # Final combined output
-        # --------------------------------------------------------------
-        print_results(regions)
+        return result
 
     finally:
-        if os.path.exists(instrumented_path):
-            os.remove(instrumented_path)
+        for path in (temp_source, exec_path):
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
-        if os.path.exists(resident_exec_path):
-            os.remove(resident_exec_path)
 
-        if not args.keep_generated:
-            if os.path.exists(standalone_dir):
-                shutil.rmtree(standalone_dir)
+def _parse_isolated_output(text):
+    parsed = {}
+    for key, pattern in ISO_PATTERNS.items():
+        match = pattern.search(text)
+        if match:
+            parsed[key] = float(match.group(1))
+
+    required = ("init", "h2d", "kernel", "d2h", "isolated")
+    missing = [key for key in required if key not in parsed]
+    if missing:
+        raise RuntimeError(
+            "Could not parse standalone timing output; missing: "
+            + ", ".join(missing)
+            + "\nProgram output:\n"
+            + text
+        )
+    return parsed
+
+
+def run_isolated(source_path, gpu_arch, timeout, standalone_dir):
+    print("\n" + "=" * 88)
+    print(" PHASE 2: ISOLATED TIMING (ONE STANDALONE PROGRAM PER REGION)")
+    print("=" * 88)
+
+    content, functions, main_func, regions, bounds_map = GEN["parse_c_file"](
+        source_path
+    )
+
+    if not regions:
+        raise RuntimeError(
+            "No '#pragma capc profitability_region' blocks found by standalone generator."
+        )
+
+    print("Detected profitability regions:")
+    for region in regions:
+        line_no = content.count("\n", 0, region.start) + 1
+        print(
+            f"  Region {region.region_id}: line {line_no}, "
+            f"function {region.function.name}()"
+        )
+
+    generated = GEN["generate_standalone_files"](
+        content,
+        functions,
+        main_func,
+        regions,
+        bounds_map,
+        output_dir=standalone_dir,
+    )
+
+    results = {}
+    flags = [
+        "-acc",
+        "-mp",
+        f"-gpu={gpu_arch}",
+        "--diag_suppress",
+        "declared_but_not_referenced",
+    ]
+
+    print("\n" + "=" * 88)
+    print(" COMPILING & EXECUTING STANDALONE REGIONS (OPENACC)")
+    print("=" * 88)
+
+    for region_id, c_file in generated:
+        exe_file = os.path.splitext(c_file)[0]
+        cmd = ["nvc"] + flags + [c_file, "-o", exe_file]
+
+        print(f"\n[Compiling Region {region_id}]: {' '.join(cmd)}")
+        comp = subprocess.run(cmd, capture_output=True, text=True)
+
+        compiler_output = "\n".join(
+            x for x in (comp.stdout.strip(), comp.stderr.strip()) if x
+        )
+        if compiler_output:
+            print(f"[Compiler Output]:\n{compiler_output}")
+
+        if comp.returncode != 0:
+            results[int(region_id)] = {
+                "status": "compile_failed",
+                "error": compiler_output,
+            }
+            print(f"❌ Compilation failed for Region {region_id}")
+            continue
+
+        print(f"[Running Region {region_id}]: {exe_file}")
+        try:
+            run = subprocess.run(
+                [os.path.abspath(exe_file)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            results[int(region_id)] = {
+                "status": "timeout",
+                "error": f"Timed out after {timeout} seconds",
+            }
+            print(f"❌ Region {region_id} timed out after {timeout} seconds")
+            continue
+
+        combined = (run.stdout or "") + "\n" + (run.stderr or "")
+
+        if run.returncode != 0:
+            results[int(region_id)] = {
+                "status": "run_failed",
+                "error": combined.strip(),
+            }
+            print(f"❌ Execution failed for Region {region_id}")
+            if combined.strip():
+                print(combined.strip())
+            continue
+
+        parsed = _parse_isolated_output(combined)
+        parsed["status"] = "ok"
+        results[int(region_id)] = parsed
+
+        print(f"✅ Region {region_id} isolated timing captured")
+        print(
+            f"   Init={parsed['init']:.6f}  "
+            f"H2D={parsed['h2d']:.6f}  "
+            f"Kernel={parsed['kernel']:.6f}  "
+            f"D2H={parsed['d2h']:.6f}  "
+            f"Isolated={parsed['isolated']:.6f}"
+        )
+
+    return results
+
+
+def print_common_table(profile, isolated):
+    print("\n" + "=" * 146)
+    print("                         CAPC COMBINED REGION TIMING REPORT (OPENACC)")
+    print("=" * 146)
+
+    header = (
+        f"{'Region':<8} | "
+        f"{'Lines':<9} | "
+        f"{'Invocations':<11} | "
+        f"{'Total Res(s)':<12} | "
+        f"{'Avg Res(s)':<11} | "
+        f"{'Total Obs(s)':<12} | "
+        f"{'Avg Obs(s)':<11} | "
+        f"{'Isolated(s)':<11}"
+    )
+    divider = "-" * len(header)
+
+    print(header)
+    print(divider)
+
+    total_res = 0.0
+    total_obs = 0.0
+    total_inv = 0
+
+    for region_id in sorted(profile):
+        p = profile[region_id]
+        iso = isolated.get(region_id, {})
+        iso_value = iso.get("isolated") if iso.get("status") == "ok" else None
+
+        total_res += p["total_res"]
+        total_obs += p["total_obs"]
+        total_inv += p["invocations"]
+
+        iso_text = f"{iso_value:.6f}" if iso_value is not None else "N/A"
+
+        print(
+            f"Region {region_id:<1} | "
+            f"{p['lines']:<9} | "
+            f"{p['invocations']:<11} | "
+            f"{p['total_res']:<12.6f} | "
+            f"{p['avg_res']:<11.6f} | "
+            f"{p['total_obs']:<12.6f} | "
+            f"{p['avg_obs']:<11.6f} | "
+            f"{iso_text:<11}"
+        )
+
+    print(divider)
+
+    avg_res_total = total_res / max(total_inv, 1)
+
+    # There is deliberately NO single TOTAL Avg Obs or TOTAL Isolated value here.
+    # Avg Obs keeps cold one-time costs unamortized per region, while Isolated
+    # cold-starts every standalone region independently; summing/averaging these
+    # values would mix different semantics and can be misleading.
+    print(
+        f"{'TOTAL':<8} | "
+        f"{'-':<9} | "
+        f"{total_inv:<11} | "
+        f"{total_res:<12.6f} | "
+        f"{avg_res_total:<11.6f} | "
+        f"{total_obs:<12.6f} | "
+        f"{'-':<11} | "
+        f"{'-':<11}"
+    )
+    print("=" * len(header))
+
+    print("\nIsolated breakdown:")
+    iso_header = (
+        f"{'Region':<8} | {'GPU Init(s)':<11} | {'H2D(s)':<11} | "
+        f"{'Kernel(s)':<11} | {'D2H(s)':<11} | {'Isolated(s)':<11}"
+    )
+    iso_divider = "-" * len(iso_header)
+    print(iso_divider)
+    print(iso_header)
+    print(iso_divider)
+
+    for region_id in sorted(profile):
+        iso = isolated.get(region_id, {})
+        if iso.get("status") == "ok":
+            print(
+                f"Region {region_id:<1} | "
+                f"{iso['init']:<11.6f} | "
+                f"{iso['h2d']:<11.6f} | "
+                f"{iso['kernel']:<11.6f} | "
+                f"{iso['d2h']:<11.6f} | "
+                f"{iso['isolated']:<11.6f}"
+            )
         else:
             print(
-                f"\n[*] Generated standalone files retained in:\n"
-                f"    {standalone_dir}"
+                f"Region {region_id:<1} | {'N/A':<11} | {'N/A':<11} | "
+                f"{'N/A':<11} | {'N/A':<11} | {'N/A':<11}"
             )
+    print(iso_divider)
+
+
+def write_csv(path, profile, isolated):
+    fields = [
+        "Region",
+        "Lines",
+        "Invocations",
+        "TotalResident",
+        "AvgResident",
+        "TotalObserved",
+        "AvgObserved",
+        "Isolated",
+        "IsolatedGPUInit",
+        "IsolatedH2D",
+        "IsolatedKernel",
+        "IsolatedD2H",
+        "StandaloneStatus",
+    ]
+
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+
+        for region_id in sorted(profile):
+            p = profile[region_id]
+            iso = isolated.get(region_id, {})
+            ok = iso.get("status") == "ok"
+
+            writer.writerow(
+                {
+                    "Region": region_id,
+                    "Lines": p["lines"],
+                    "Invocations": p["invocations"],
+                    "TotalResident": f"{p['total_res']:.9f}",
+                    "AvgResident": f"{p['avg_res']:.9f}",
+                    "TotalObserved": f"{p['total_obs']:.9f}",
+                    "AvgObserved": f"{p['avg_obs']:.9f}",
+                    "Isolated": f"{iso['isolated']:.9f}" if ok else "",
+                    "IsolatedGPUInit": f"{iso['init']:.9f}" if ok else "",
+                    "IsolatedH2D": f"{iso['h2d']:.9f}" if ok else "",
+                    "IsolatedKernel": f"{iso['kernel']:.9f}" if ok else "",
+                    "IsolatedD2H": f"{iso['d2h']:.9f}" if ok else "",
+                    "StandaloneStatus": iso.get("status", "missing"),
+                }
+            )
+
+    print(f"\n[+] CSV written to: {os.path.abspath(path)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Combined OpenACC CAPC timing tool: resident + observed + isolated "
+            "in one run and one per-region table."
+        )
+    )
+    parser.add_argument("source", help="OpenACC C source containing CAPC regions")
+    parser.add_argument("--gpu", default="cc70", help="GPU architecture (default: cc70)")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="Timeout per program/standalone region in seconds (default: 300)",
+    )
+    parser.add_argument(
+        "--standalone-dir",
+        default="standalone_regions",
+        help="Directory for generated standalone regions (default: standalone_regions)",
+    )
+    parser.add_argument(
+        "--csv",
+        default=None,
+        help="Optional CSV output path for the combined per-region results",
+    )
+    args = parser.parse_args()
+
+    source_path = os.path.abspath(args.source)
+    if not os.path.isfile(source_path):
+        print(f"Error: input source not found: {source_path}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        profile = run_resident_observed(
+            source_path,
+            gpu_arch=args.gpu,
+            timeout=args.timeout,
+        )
+
+        isolated = run_isolated(
+            source_path,
+            gpu_arch=args.gpu,
+            timeout=args.timeout,
+            standalone_dir=args.standalone_dir,
+        )
+
+        print_common_table(profile, isolated)
+
+        if args.csv:
+            write_csv(args.csv, profile, isolated)
+
+        failed = [
+            rid for rid, data in isolated.items()
+            if data.get("status") != "ok"
+        ]
+        if failed:
+            print(
+                "\n[!] Warning: standalone timing failed for region(s): "
+                + ", ".join(map(str, failed))
+            )
+            sys.exit(2)
+
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        sys.exit(130)
+    except Exception as exc:
+        print(f"\nError: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

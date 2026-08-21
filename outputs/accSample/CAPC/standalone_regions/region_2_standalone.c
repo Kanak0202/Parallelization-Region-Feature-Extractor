@@ -2,94 +2,95 @@
 #define _POSIX_C_SOURCE 199309L
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <openacc.h>
+
+/* ============================================================
+ * Original source support code (original main removed)
+ * ============================================================ */
+// C program to implement Vector Arithmetic
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <unistd.h>
-#include <sys/time.h>
 
-#define N 49000000
-#define T 500
+#define SIZE 13000000
 
-double a[N];
-double b[N];
-
-void init_array()
+int main(void)
 {
-        int i, j;
-        #pragma capc profitability_region begin
-        #pragma acc parallel loop present(a[0:N],b[0:N])
-        for (i=0; i<N; i++)
-        {
-                a[i] = ((double)i)/N;
-                b[i] = ((double)i+1)/N;
+    struct timespec __capc_t_start, __capc_t_end;
+    double __capc_t_init = 0.0;
+    double __capc_t_in = 0.0;
+    double __capc_t_gpu = 0.0;
+    double __capc_t_out = 0.0;
+
+    /* Target Region 2; original function: main() */
+    /* === Host-only input/setup replay (NOT timed) === */
+    double A[13000000];
+        double B[13000000];
+        double C[13000000];
+        double D[13000000];
+        double E[13000000];
+    
+        int i = 0;
+    
+        // Array initialization
+    
+    /* Earlier CAPC producer/initializer replayed on host. */
+        for (i = 0; i <= 12999999; i += 1) {
+            A[i] = ((double)i);
+            B[i] = ((double)(i + 1));
         }
-        #pragma capc profitability_region end
-}
 
-void print_array()
-{
-        int i, j;
+    /* === GPU/OpenACC Runtime Initialization === */
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+    acc_init(acc_device_nvidia);
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_init = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
-        for (i=0; i<N; i++)
-                printf("%lf ", a[i]);
-
-        printf("\n");
-
-        for (i=0; i<N; i++)
-                printf("%lf ", b[i]);
-}
-
-
-int main()
-{
-
-    int i, j, k, t;
-    struct timespec t_start, t_end;
-    double t_in = 0.0, t_gpu = 0.0, t_out = 0.0;
-
-    /* === STAGE 1 & 2: Interleaved Setup & Prerequisite Regions === */
-    #pragma acc enter data create(a[0:N],b[0:N])
-
-        init_array();
-
-    /* === Transfer In (Host -> Device) === */
-    clock_gettime(CLOCK_MONOTONIC, &t_start);
-    #pragma acc update device(a[0:N], b[0:N])
+    /* === Device allocation only (no data movement) === */
+    #pragma acc enter data create(C[0:13000000], A[0:13000000], B[0:13000000])
     #pragma acc wait
-    clock_gettime(CLOCK_MONOTONIC, &t_end);
-    t_in = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
+
+    /* === Required Transfer In (Host -> Device) === */
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+    #pragma acc update device(A[0:13000000], B[0:13000000])
+    #pragma acc wait
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_in = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
     /* === Isolated Kernel Timing for Target Region 2 === */
-    clock_gettime(CLOCK_MONOTONIC, &t_start);
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
 
-        #pragma capc profitability_region begin
-    #pragma acc parallel loop present(a[0:N],b[0:N])
-                for (i = 2; i < N - 1; i++)
-                {
-                        b[i] = 0.33333 * (a[i-1] + a[i] + a[i + 1]);
-                }
+    #pragma capc profitability_region begin
+    #pragma acc parallel loop auto gang vector num_gangs(50782) vector_length(256) present(C[0:13000000], A[0:13000000], B[0:13000000])
+        for (i = 0; i <= 12999999; i += 1) {
+            C[i] = A[i] + B[i];
+        }
     #pragma capc profitability_region end
 
     #pragma acc wait
-    clock_gettime(CLOCK_MONOTONIC, &t_end);
-    t_gpu = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_gpu = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
-    /* === Transfer Out (Device -> Host) === */
-    clock_gettime(CLOCK_MONOTONIC, &t_start);
-    #pragma acc update self(a[0:N], b[0:N])
+    /* === Required Transfer Out (Device -> Host) === */
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
+    #pragma acc update self(C[0:13000000])
     #pragma acc wait
-    clock_gettime(CLOCK_MONOTONIC, &t_end);
-    t_out = (t_end.tv_sec - t_start.tv_sec) + (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
+    clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
+    __capc_t_out = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
-    /* === STAGE 4: Reporting Breakdown === */
-    double t_total = t_in + t_gpu + t_out;
+    double __capc_t_total = __capc_t_init + __capc_t_in + __capc_t_gpu + __capc_t_out;
     printf("Region 2 Execution Breakdown:\n");
-    printf("  - Transfer In  (H2D): %f seconds\n", t_in);
-    printf("  - Kernel Time (GPU): %f seconds\n", t_gpu);
-    printf("  - Transfer Out (D2H): %f seconds\n", t_out);
-    printf("  - Total Region Time : %f seconds\n", t_total);
+    printf("  - GPU Initialization : %f seconds\n", __capc_t_init);
+    printf("  - Transfer In  (H2D): %f seconds\n", __capc_t_in);
+    printf("  - Kernel Time (GPU): %f seconds\n", __capc_t_gpu);
+    printf("  - Transfer Out (D2H): %f seconds\n", __capc_t_out);
+    printf("  - Isolated Region Time: %f seconds\n", __capc_t_total);
+
+    #pragma acc exit data delete(C[0:13000000], A[0:13000000], B[0:13000000])
+    #pragma acc wait
+
+    /* Runtime shutdown is cleanup and is intentionally not part of isolated time. */
+    acc_shutdown(acc_device_nvidia);
 
     return 0;
 }

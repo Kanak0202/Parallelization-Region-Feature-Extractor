@@ -1,12 +1,12 @@
 #include <stdio.h>
-#define SIZE 1000000000
+#define N 10000000
 
-void capc_region_2(double (* restrict D), double (* restrict A), double (* restrict B))
+void capc_region_2(double (* restrict B))
 {
     int i;
-	for (i=0; i<SIZE; ++i)
-	{
-		D[i]=A[i]-B[i];
-	}
+    for (i = 0; i < N; i++)
+    {
+        B[i] = B[i] + 2.0;
+    }
 
 }

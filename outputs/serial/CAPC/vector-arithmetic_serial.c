@@ -1,7 +1,7 @@
 //Vector Arithmatic
 
 #include <stdio.h>
-#define SIZE 5
+#define SIZE 100000000
 
 int main()
 {

@@ -111,67 +111,53 @@ OPENACC_PROFILER="./annotate_acc_timing.py"
 # ----------------------------------------------------------------------------
 # Sweep values
 #
-# Every detected loop-bound macro is swept independently.
+# Dense decade-wise sweep:
 #
-# Example:
+#   1       -> 10           increment 1
+#   10      -> 100          increment 10
+#   100     -> 1000         increment 100
+#   1000    -> 10000        increment 1000
+#   ...
+#   1e8     -> 1e9          increment 1e8
 #
-#   #define N 2000
-#   #define TSTEPS 500
+# Boundary values are included only once.
 #
-# If both occur in loop bounds:
+# Generated sequence:
 #
-#   Sweep N while TSTEPS remains 500.
-#   Sweep TSTEPS while N remains 2000.
+#   1 2 3 ... 10
+#   20 30 ... 100
+#   200 300 ... 1000
+#   ...
+#   200000000 ... 1000000000
 # ----------------------------------------------------------------------------
 
-SWEEP_VALUES=(
-    1
-    2
-    5
-    7
+SWEEP_VALUES=()
 
-    10
-    20
-    50
-    75
+# 1, 2, ..., 10
+for ((v = 1; v <= 10; v++))
+do
+    SWEEP_VALUES+=("$v")
+done
 
-    100
-    200
-    500
-    750
-
-    1000
-    2000
-    5000
-    7500
-
-    10000
-    20000
-    50000
-    75000
-
-    100000
-    200000
-    500000
-    750000
-
-    1000000
-    2000000
-    5000000
-    7500000
-
-    10000000
-    20000000
-    50000000
-    75000000
-
+# 20,30,...,100
+# 200,300,...,1000
+# ...
+# 200000000,...,1000000000
+for BASE in \
+    10 \
+    100 \
+    1000 \
+    10000 \
+    100000 \
+    1000000 \
+    10000000 \
     100000000
-    200000000
-    500000000
-    750000000
-
-    1000000000
-)
+do
+    for ((MULT = 2; MULT <= 10; MULT++))
+    do
+        SWEEP_VALUES+=("$((MULT * BASE))")
+    done
+done
 
 
 # ----------------------------------------------------------------------------
@@ -1298,11 +1284,8 @@ PY
 extract_gpu_times()
 {
     local TOOL="$1"
-
     local LOG_FILE="$2"
-
     local RESULT_FILE="$3"
-
 
     python3 - \
         "$TOOL" \
@@ -1314,30 +1297,45 @@ import sys
 
 
 tool = sys.argv[1]
-
 log_file = sys.argv[2]
-
 result_file = sys.argv[3]
 
 
 with open(log_file, "r", errors="ignore") as f:
-
     lines = f.readlines()
 
 
 results = {}
 
 
+# New combined GPU timing table:
+#
+# 0 Region
+# 1 Lines
+# 2 Invocations
+# 3 Total Res(s)
+# 4 Avg Res(s)
+# 5 Total Obs(s)
+# 6 Avg Obs(s)
+# 7 Isolated(s)
+#
+# GPU scripts number regions from 1.
+# Feature extractor RegionID is 0-based.
+# Therefore:
+#
+#     GPU Region 1 -> RegionID 0
+#     GPU Region 2 -> RegionID 1
+#     ...
+
+
 for raw_line in lines:
 
     line = raw_line.strip()
-
 
     if not re.match(
         r'^Region\s+\d+\s*\|',
         line
     ):
-
         continue
 
 
@@ -1347,6 +1345,10 @@ for raw_line in lines:
     ]
 
 
+    if len(parts) < 8:
+        continue
+
+
     region_match = re.match(
         r'^Region\s+(\d+)',
         parts[0]
@@ -1354,76 +1356,41 @@ for raw_line in lines:
 
 
     if not region_match:
-
         continue
-
-
-    region = int(
-        region_match.group(1)
-    )
 
 
     try:
 
+        # --------------------------------------------------------------
+        # IMPORTANT:
+        #
+        # Combined GPU profiler:
+        #     Region 1, Region 2, ...
+        #
+        # LLVM feature extractor:
+        #     RegionID 0, RegionID 1, ...
+        # --------------------------------------------------------------
 
-        if tool == "omp45":
-
-            # 0 Region
-            # 1 Lines
-            # 2 Calls
-            # 3 Tot Res
-            # 4 Avg Res
-            # 5 Tot Obs
-            # 6 Avg Obs
-            # 7 Tot Iso
-            # 8 Avg Iso
-
-            if len(parts) < 9:
-
-                continue
+        region = int(
+            region_match.group(1)
+        ) - 1
 
 
-            resident = parts[4]
-
-            observed = parts[6]
-
-            isolated = parts[8]
-
-
-        elif tool == "openacc":
-
-            # 0 Region
-            # 1 Lines
-            # 2 Calls
-            # 3 Total Res
-            # 4 Avg Res
-            # 5 Total Obs
-            # 6 Avg Obs
-            # 7 Isolated
-
-            if len(parts) < 8:
-
-                continue
-
-
-            resident = parts[4]
-
-            observed = parts[6]
-
-            isolated = parts[7]
-
-
-        else:
-
+        if region < 0:
             continue
 
 
-        # Validate numeric values.
+        resident = parts[4]
+
+        observed = parts[6]
+
+        isolated = parts[7]
+
+
+        # Validate timing values.
 
         float(resident)
-
         float(observed)
-
         float(isolated)
 
 
@@ -1438,7 +1405,6 @@ for raw_line in lines:
         ValueError,
         IndexError
     ):
-
         continue
 
 
@@ -1447,7 +1413,6 @@ with open(result_file, "w") as f:
     for region in sorted(results):
 
         resident, observed, isolated = results[region]
-
 
         f.write(
             f"{region}|"
@@ -1458,7 +1423,6 @@ with open(result_file, "w") as f:
 
 PY
 }
-
 
 # ============================================================================
 # RUN CPU PROGRAM
@@ -1561,6 +1525,7 @@ run_cpu()
 
 
     gcc \
+        -O1 \
         -fopenmp \
         "$TEMP_SOURCE" \
         -o "$BINARY" \
@@ -1860,6 +1825,7 @@ run_gpu()
             python3 \
             "$PROFILER" \
             "$TEMP_SOURCE" \
+            --timeout "$RUN_TIMEOUT" \
             > "$RUN_LOG" 2>&1
 
 
@@ -1872,6 +1838,7 @@ run_gpu()
         python3 \
             "$PROFILER" \
             "$TEMP_SOURCE" \
+            --timeout "$RUN_TIMEOUT" \
             > "$RUN_LOG" 2>&1
 
 
