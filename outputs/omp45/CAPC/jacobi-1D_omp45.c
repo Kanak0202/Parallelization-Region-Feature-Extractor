@@ -14,7 +14,7 @@ void init_array()
 {
         int i, j;
         #pragma capc profitability_region begin
-        #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
+        #pragma omp target teams distribute parallel for map(from:a[0:N],b[0:N])
         for (i=0; i<N; i++)
         {
                 a[i] = ((double)i)/N;
@@ -40,15 +40,13 @@ int main()
 {
         int t, i, j;
 
-        #pragma omp target enter data map(alloc:a[0:N],b[0:N])
-
         init_array();
 
         for (t = 0; t < T; t++)
         {
                 
                 #pragma capc profitability_region begin
-                #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
+                #pragma omp target teams distribute parallel for map(to:a[0:N]) map(tofrom:b[0:N])
                 for (i = 2; i < N - 1; i++)
                 {
                         b[i] = 0.33333 * (a[i-1] + a[i] + a[i + 1]);
@@ -57,7 +55,7 @@ int main()
                 
                 
                 #pragma capc profitability_region begin
-                #pragma omp target teams distribute parallel for map(alloc:a[0:N],b[0:N]) private(i)
+                #pragma omp target teams distribute parallel for map(to:b[0:N]) map(tofrom:a[0:N])
                 for (i = 2; i < N - 1; i++)
                 {
                         a[i] = b[i];
@@ -66,17 +64,13 @@ int main()
                 
         }
 
-        #pragma omp target update from(a[0:N],b[0:N])
-
 //      print_array();
 
-       printf("a[0]=%lf\n",a[0]);
+        printf("a[0]=%lf\n",a[0]);
         printf("a[%d]=%lf\n",N-2,a[N-2]);
 
         printf("b[0]=%lf\n",b[0]);
         printf("b[%d]=%lf\n",N-1,b[N-1]);
-
-        #pragma omp target exit data map(delete:a[0:N],b[0:N])
 
         return 0;
 }

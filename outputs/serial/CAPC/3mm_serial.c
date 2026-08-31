@@ -21,7 +21,7 @@ int main()
 			d[i][j]=(double)(0.4*j+i);
 			e[i][j]=(double)(0.5*i+j);
 			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
+			result[i][j]=0.0;
 		}
 	}
     #pragma capc profitability_region end

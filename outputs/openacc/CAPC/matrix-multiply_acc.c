@@ -9,10 +9,8 @@ int main()
 	//double a[N][M],b[M][K],c[N][K];
 	double a[N][N],b[N][N],c[N][N];
 
-	#pragma acc enter data create(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
-
 	#pragma capc profitability_region begin
-	#pragma acc parallel loop collapse(2) present(a[0:N][0:N])
+	#pragma acc parallel loop collapse(2) copyout(a[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -23,7 +21,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-	#pragma acc parallel loop collapse(2) present(b[0:N][0:N])
+	#pragma acc parallel loop collapse(2) copyout(b[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -34,8 +32,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-
-	#pragma acc parallel loop collapse(2) present(c[0:N][0:N])
+	#pragma acc parallel loop collapse(2) copyout(c[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -46,14 +43,12 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-	#pragma acc parallel loop collapse(2) present(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
+	#pragma acc parallel loop collapse(2) copyin(a[0:N][0:N],b[0:N][0:N]) copy(c[0:N][0:N])
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				c[i][j]= c[i][j]+a[i][k]*b[k][j];
     #pragma capc profitability_region end
-
-	#pragma acc update self(c[0:N][0:N])
 
     
 	for(i=0;i<N;i++)
@@ -64,8 +59,6 @@ int main()
 		}
 		printf("\n");
 	}
-
-	#pragma acc exit data delete(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
 
 	return 0;
 }

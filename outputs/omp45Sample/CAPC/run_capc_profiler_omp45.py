@@ -868,15 +868,15 @@ def print_results(regions):
 
         # Observed time of ONE cold/first invocation.
         avg_observed = (
-            reg["init_time"]
-            + reg["one_time_transfer_time"]
+            # reg["init_time"]
+            reg["one_time_transfer_time"]
             + avg_recurring_observed
         )
 
         # Actual cumulative observed contribution.
         total_observed_region = (
-            reg["init_time"]
-            + reg["one_time_transfer_time"]
+            # reg["init_time"]
+            reg["one_time_transfer_time"]
             + reg["recurring_transfer_time"]
             + reg["resident_time"]
         )

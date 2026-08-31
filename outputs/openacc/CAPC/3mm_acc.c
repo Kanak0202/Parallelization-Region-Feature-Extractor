@@ -2,18 +2,16 @@
 
 #include<stdio.h>
 
-#define N 8000
+#define N 2000
 
 int main()
 {
 	int i,j,k;
 	double a[N][N],b[N][N],c[N][N],d[N][N],e[N][N],f[N][N],result[N][N];
 
-    #pragma acc enter data create(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N],d[0:N][0:N],e[0:N][0:N],f[0:N][0:N],result[0:N][0:N])
-
 	//Array Initialization
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(a,b,c,d,e,f,result)
+    #pragma acc parallel loop collapse(2) copyout(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N],d[0:N][0:N],e[0:N][0:N],f[0:N][0:N],result[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -24,23 +22,20 @@ int main()
 			d[i][j]=(double)(0.4*j+i);
 			e[i][j]=(double)(0.5*i+j);
 			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
+			result[i][j]=0.0;
 		}
 	}
     #pragma capc profitability_region end
 
 	//result = a.b
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(a,b,result)
+    #pragma acc parallel loop collapse(2) copyin(a[0:N][0:N],b[0:N][0:N]) copy(result[0:N][0:N])
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+a[i][k]*b[k][j];
     #pragma capc profitability_region end
-
 	//print a.b
-
-    #pragma acc update self(result[0:N][0:N])
 	
        printf("A[0][0]=%lf\n",result[0][0]);
        printf("A[%d][%d]=%lf\n",N-1,N-1,result[N-1][N-1]);
@@ -59,7 +54,7 @@ int main()
 #if 1
 	//result = c.d
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(c,d,result)
+    #pragma acc parallel loop collapse(2) copyin(c[0:N][0:N],d[0:N][0:N]) copy(result[0:N][0:N])
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
@@ -68,12 +63,11 @@ int main()
 
 	//print c.d
 
-    #pragma acc update self(result[0:N][0:N])
-
        printf("B[0][0]=%lf\n",result[0][0]);
        printf("B[%d][%d]=%lf\n",N-1,N-1,result[N-1][N-1]);
 
 #if 0
+
 
 	printf("\nResult=C.D\n");
 	for(i=0;i<N;i++)
@@ -87,7 +81,7 @@ int main()
 #endif
 	//result = e.f
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(e,f,result)
+    #pragma acc parallel loop collapse(2) copyin(e[0:N][0:N],f[0:N][0:N]) copy(result[0:N][0:N])
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
@@ -95,9 +89,6 @@ int main()
     #pragma capc profitability_region end
 
 	//print e.f
-
-    #pragma acc update self(result[0:N][0:N])
-
        printf("C[0][0]=%lf\n",result[0][0]);
        printf("C[%d][%d]=%lf\n",N-1,N-1,result[N-1][N-1]);
    
@@ -114,8 +105,5 @@ int main()
 		printf("\n");
 	}
 #endif
-
-    #pragma acc exit data delete(a[0:N][0:N],b[0:N][0:N],c[0:N][0:N],d[0:N][0:N],e[0:N][0:N],f[0:N][0:N],result[0:N][0:N])
-
 	return 0;
 }

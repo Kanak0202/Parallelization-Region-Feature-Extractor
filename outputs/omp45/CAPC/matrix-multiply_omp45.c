@@ -9,10 +9,8 @@ int main()
 	//double a[N][M],b[M][K],c[N][K];
 	double a[N][N],b[N][N],c[N][N];
 
-	#pragma omp target enter data map(alloc:a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
-
 	#pragma capc profitability_region begin
-	#pragma omp target teams distribute parallel for collapse(2) map(alloc:a[0:N][0:N])
+	#pragma omp target teams distribute parallel for collapse(2) map(from:a[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -23,7 +21,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-	#pragma omp target teams distribute parallel for collapse(2) map(alloc:b[0:N][0:N])
+	#pragma omp target teams distribute parallel for collapse(2) map(from:b[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -34,8 +32,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-
-	#pragma omp target teams distribute parallel for collapse(2) map(alloc:c[0:N][0:N])
+	#pragma omp target teams distribute parallel for collapse(2) map(from:c[0:N][0:N])
 	for(i=0;i<N;i++)
 	{
 		for(j=0;j<N;j++)
@@ -46,14 +43,12 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-	#pragma omp target teams distribute parallel for collapse(2) private(k) map(alloc:a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
+	#pragma omp target teams distribute parallel for collapse(2) map(to:a[0:N][0:N],b[0:N][0:N]) map(tofrom:c[0:N][0:N])
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				c[i][j]= c[i][j]+a[i][k]*b[k][j];
     #pragma capc profitability_region end
-
-	#pragma omp target update from(c[0:N][0:N])
 
     
 	for(i=0;i<N;i++)
@@ -64,8 +59,6 @@ int main()
 		}
 		printf("\n");
 	}
-
-	#pragma omp target exit data map(delete:a[0:N][0:N],b[0:N][0:N],c[0:N][0:N])
 
 	return 0;
 }

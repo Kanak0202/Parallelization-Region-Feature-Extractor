@@ -2,7 +2,9 @@
 
 #include<stdio.h>
 
-#define N 5000
+#define N 100
+
+#include <omp.h>
 
 int main()
 {
@@ -11,9 +13,10 @@ int main()
 
 	//Array Initialization
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j)
+	#pragma omp parallel for private(i,j)
 	for(i=0;i<N;i++)
 	{
+		#pragma omp parallel for private(j)
 		for(j=0;j<N;j++)
 		{
 			a[i][j]=(double)(0.1*i+j);	
@@ -22,20 +25,20 @@ int main()
 			d[i][j]=(double)(0.4*j+i);
 			e[i][j]=(double)(0.5*i+j);
 			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
+			result[i][j]=0.0;
 		}
 	}
     #pragma capc profitability_region end
 
 	//result = a.b
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+a[i][k]*b[k][j];
     #pragma capc profitability_region end
-
 	//print a.b
 	
        printf("A[0][0]=%lf\n",result[0][0]);
@@ -55,8 +58,9 @@ int main()
 #if 1
 	//result = c.d
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+c[i][k]*d[k][j];
@@ -68,6 +72,7 @@ int main()
        printf("B[%d][%d]=%lf\n",N-1,N-1,result[N-1][N-1]);
 
 #if 0
+
 
 	printf("\nResult=C.D\n");
 	for(i=0;i<N;i++)
@@ -81,8 +86,9 @@ int main()
 #endif
 	//result = e.f
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+e[i][k]*f[k][j];

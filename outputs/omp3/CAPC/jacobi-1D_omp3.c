@@ -66,7 +66,7 @@ int main()
 
 //      print_array();
 
-       printf("a[0]=%lf\n",a[0]);
+        printf("a[0]=%lf\n",a[0]);
         printf("a[%d]=%lf\n",N-2,a[N-2]);
 
         printf("b[0]=%lf\n",b[0]);

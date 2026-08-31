@@ -1,83 +1,95 @@
-#include<stdio.h>
-#include<math.h>
+// Hill Cipher - Serial Version
+// No user/file input
+// Message and key matrix are initialized internally
 
-#define N 13000
+#include <stdio.h>
+#include <math.h>
 
-int SIZE;
-
-float encrypt[N][1], a[N][N], b[N][N], mes[N][1], c[N][N];
-
-void encryption();
-void getKeyMessage();
+#define N 100
 
 int main()
 {
-        getKeyMessage();
-        encryption();
-        return 0;
-}
+	int i, j, k;
 
-void getKeyMessage()
-{
-        int i, j;
-        char msg[N];
+	float encrypt[N][1];
+	float a[N][N];
+	float mes[N][1];
 
-        SIZE=0;
+	/* ---------------------------------------------------------
+	   Message Initialization
 
-        FILE *fptr;
+	   Equivalent to:
+	       mes[i][0] = msg[i] - 97;
 
-        char ch,filename[15]="file.txt";
+	   We generate characters cyclically:
+	       a, b, c, ..., z, a, b, ...
+	   Therefore mes contains:
+	       0, 1, 2, ..., 25, 0, 1, ...
+	   --------------------------------------------------------- */
 
-        fptr = fopen(filename, "r");
-
-        if (fptr == NULL)
-        {
-                printf("Cannot open file \n");
-                return;
-        }
-
-        ch = fgetc(fptr);
-        while (ch != EOF)
-        {
-                msg[SIZE++]=ch;
-                ch = fgetc(fptr);
-        }
-
-        fclose(fptr);
-
-        printf("\nOriginal string");
-        for(i = 0; i < SIZE; i++)
-                printf("%c",msg[i]);
-
-        #pragma capc profitability_region begin
-        for(i = 0; i < SIZE; i++)
-                mes[i][0] = msg[i] - 97;
-        #pragma capc profitability_region end
+	#pragma capc profitability_region begin
+	for(i = 0; i < N; i++)
+	{
+		mes[i][0] = (float)(i % 26);
+		encrypt[i][0] = 0.0f;
+	}
+	#pragma capc profitability_region end
 
 
-        #pragma capc profitability_region begin
-        for(i = 0; i < SIZE; i++)
-                for(j = 0; j < SIZE; j++)
-                {
-                        a[i][j]=i+j+1+'0';
-                        c[i][j] = a[i][j];
-                }
-        #pragma capc profitability_region end
-}
+	/* ---------------------------------------------------------
+	   Key Matrix Initialization
 
-void encryption()
-{
-        int i, j, k;
+	   Original code used:
+	       a[i][j] = i + j + 1 + '0';
 
-        #pragma capc profitability_region begin
-        for(i = 0; i < SIZE; i++)
-                for(j = 0; j < 1; j++)
-                        for(k = 0; k < SIZE; k++)
-                                encrypt[i][j] = encrypt[i][j] + a[i][k] * mes[k][j];
-        #pragma capc profitability_region end
+	   '0' has ASCII value 48, therefore:
+	       a[i][j] = i + j + 49
+	   --------------------------------------------------------- */
 
-        printf("\nEncrypted string is: ");
-        for(i = 0; i < SIZE; i++)
-                printf("%c", (char)(fmod(encrypt[i][0], 26) + 97));
+	#pragma capc profitability_region begin
+	for(i = 0; i < N; i++)
+	{
+		for(j = 0; j < N; j++)
+		{
+			a[i][j] = (float)(i + j + 1 + '0');
+		}
+	}
+	#pragma capc profitability_region end
 
+
+	/* ---------------------------------------------------------
+	   Hill Cipher Encryption
+
+	   encrypt = a * mes
+
+	   Original loop structure is preserved.
+	   --------------------------------------------------------- */
+
+	#pragma capc profitability_region begin
+	for(i = 0; i < N; i++)
+	{
+		for(j = 0; j < 1; j++)
+		{
+			for(k = 0; k < N; k++)
+			{
+				encrypt[i][j] =
+					encrypt[i][j] +
+					a[i][k] * mes[k][j];
+			}
+		}
+	}
+	#pragma capc profitability_region end
+
+
+	/* Print only a few values so that the compiler cannot
+	   completely eliminate the computation. */
+
+	printf("encrypt[0][0] = %f\n", encrypt[0][0]);
+	printf("encrypt[%d][0] = %f\n", N-1, encrypt[N-1][0]);
+
+	printf("Encrypted characters: ");
+	printf("%c ", (char)(fmod(encrypt[0][0], 26.0f) + 97));
+	printf("%c\n", (char)(fmod(encrypt[N-1][0], 26.0f) + 97));
+
+	return 0;
 }

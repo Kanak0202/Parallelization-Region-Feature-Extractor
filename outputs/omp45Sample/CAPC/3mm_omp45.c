@@ -2,7 +2,7 @@
 
 #include<stdio.h>
 
-#define N 8000
+#define N 2000
 
 int main()
 {

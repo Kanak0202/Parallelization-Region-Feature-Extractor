@@ -15,7 +15,7 @@ int main()
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop copyout(A[0:N], B[0:N])
+#pragma acc parallel loop copyout(A[0:N],B[0:N])
     for (i = 0; i < N; i++)
     {
         A[i] = (double)i;
@@ -55,7 +55,7 @@ int main()
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop copyin(A[0:N], B[0:N]) copyout(C[0:N])
+#pragma acc parallel loop copyin(A[0:N],B[0:N]) copyout(C[0:N])
     for (i = 0; i < N; i++)
     {
         C[i] = A[i] + B[i];

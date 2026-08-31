@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <omp.h>
 
 #define N 10000000
 
@@ -13,13 +12,10 @@ int main()
 
     /* ============================================================
        Region 1: Initialization
-
-       A and B are write-only, so map(from:) is appropriate.
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma omp target teams distribute parallel for private(i) \
-    map(from:A[0:N], B[0:N])
+#pragma omp target teams distribute parallel for map(from:A[0:N],B[0:N])
     for (i = 0; i < N; i++)
     {
         A[i] = (double)i;
@@ -30,13 +26,10 @@ int main()
 
     /* ============================================================
        Region 2: Read-modify-write A
-
-       A must move H2D and then back D2H.
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma omp target teams distribute parallel for private(i) \
-    map(tofrom:A[0:N])
+#pragma omp target teams distribute parallel for map(tofrom:A[0:N])
     for (i = 0; i < N; i++)
     {
         A[i] = 1.5 * A[i];
@@ -49,8 +42,7 @@ int main()
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma omp target teams distribute parallel for private(i) \
-    map(tofrom:B[0:N])
+#pragma omp target teams distribute parallel for map(tofrom:B[0:N])
     for (i = 0; i < N; i++)
     {
         B[i] = B[i] + 2.0;
@@ -60,15 +52,10 @@ int main()
 
     /* ============================================================
        Region 4: Combine
-
-       A and B are read-only.
-       C is write-only.
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma omp target teams distribute parallel for private(i) \
-    map(to:A[0:N], B[0:N]) \
-    map(from:C[0:N])
+#pragma omp target teams distribute parallel for map(to:A[0:N],B[0:N]) map(from:C[0:N])
     for (i = 0; i < N; i++)
     {
         C[i] = A[i] + B[i];

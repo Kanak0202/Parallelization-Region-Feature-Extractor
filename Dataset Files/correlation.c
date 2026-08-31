@@ -408,7 +408,7 @@ void kernel_correlation(int m, int n,
   DATA_TYPE eps = SCALAR_VAL(0.1);
 
 
-#pragma scop
+#pragma capc profitability_region begin
   for (j = 0; j < _PB_M; j++)
     {
       mean[j] = SCALAR_VAL(0.0);
@@ -416,8 +416,8 @@ void kernel_correlation(int m, int n,
 	mean[j] += data[i][j];
       mean[j] /= float_n;
     }
-
-
+#pragma capc profitability_region end
+#pragma capc profitability_region begin
    for (j = 0; j < _PB_M; j++)
     {
       stddev[j] = SCALAR_VAL(0.0);
@@ -430,16 +430,22 @@ void kernel_correlation(int m, int n,
          divide. */
       stddev[j] = stddev[j] <= eps ? SCALAR_VAL(1.0) : stddev[j];
     }
-
+#pragma capc profitability_region end
   /* Center and reduce the column vectors. */
+#pragma capc profitability_region begin
+
   for (i = 0; i < _PB_N; i++)
     for (j = 0; j < _PB_M; j++)
       {
         data[i][j] -= mean[j];
         data[i][j] /= SQRT_FUN(float_n) * stddev[j];
       }
+#pragma capc profitability_region end
+
 
   /* Calculate the m * m correlation matrix. */
+  #pragma capc profitability_region begin
+
   for (i = 0; i < _PB_M-1; i++)
     {
       corr[i][i] = SCALAR_VAL(1.0);
@@ -451,8 +457,9 @@ void kernel_correlation(int m, int n,
           corr[j][i] = corr[i][j];
         }
     }
+    #pragma capc profitability_region end
+
   corr[_PB_M-1][_PB_M-1] = SCALAR_VAL(1.0);
-#pragma endscop
 
 }
 

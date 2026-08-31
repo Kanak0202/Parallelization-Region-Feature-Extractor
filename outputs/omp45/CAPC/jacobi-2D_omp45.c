@@ -11,7 +11,7 @@ int main()
 
 	//Array initialization
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j)
+    #pragma omp target teams distribute parallel for collapse(2) map(from:A[0:n][0:n],B[0:n][0:n])
 	for(i=0;i<n;i++)
 	{
 		for(j=0;j<n;j++)
@@ -23,26 +23,22 @@ int main()
 	}
     #pragma capc profitability_region end
 
-    #pragma omp target enter data map(to:A[0:n][0:n],B[0:n][0:n])
-
 	//Computations
     #pragma capc profitability_region begin
-    #pragma omp target teams distribute parallel for collapse(2) map(alloc:A[0:n][0:n],B[0:n][0:n]) private(i,j)
-	for (i = 1; i < n; i++)
+    #pragma omp target teams distribute parallel for collapse(2) map(to:A[0:n][0:n]) map(tofrom:B[0:n][0:n])
+	for (i = 1; i < n-1; i++)
 		for (j = 1; j < n - 1; j++)
 			B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
 
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-    #pragma omp target teams distribute parallel for collapse(2) map(alloc:A[0:n][0:n],B[0:n][0:n]) private(i,j)
+    #pragma omp target teams distribute parallel for collapse(2) map(to:B[0:n][0:n]) map(tofrom:A[0:n][0:n])
 	for (i = 1; i < n - 1; i++)
 		for (j = 1; j < n - 1; j++)
 			A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
 
     #pragma capc profitability_region end
-
-    #pragma omp target update from(A[0:n][0:n],B[0:n][0:n])
 
 	printf("\nMatrix A :\n");
 	for (i = 0; i < n; i++)
@@ -55,8 +51,6 @@ int main()
 			printf("%lf ",B[i][j]);
 
 	printf("\n");
-
-    #pragma omp target exit data map(delete:A[0:n][0:n],B[0:n][0:n])
 
 	return 0;
 }

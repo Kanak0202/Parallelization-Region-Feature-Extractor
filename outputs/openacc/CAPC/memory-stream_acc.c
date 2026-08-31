@@ -13,10 +13,11 @@ int main()
 
     /* ============================================================
        Region 1: Initialization
+       Write-only B and C
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop
+#pragma acc parallel loop copyout(B[0:N],C[0:N])
     for (i = 0; i < N; i++)
     {
         B[i] = (double)i;
@@ -27,10 +28,11 @@ int main()
 
     /* ============================================================
        Region 2: Copy
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop
+#pragma acc parallel loop copyin(B[0:N]) copyout(A[0:N])
     for (i = 0; i < N; i++)
     {
         A[i] = B[i];
@@ -40,10 +42,11 @@ int main()
 
     /* ============================================================
        Region 3: Scale
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop
+#pragma acc parallel loop copyin(C[0:N]) copyout(D[0:N])
     for (i = 0; i < N; i++)
     {
         D[i] = 2.5 * C[i];
@@ -53,10 +56,11 @@ int main()
 
     /* ============================================================
        Region 4: Triad
+       Two loads + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
-#pragma acc parallel loop
+#pragma acc parallel loop copyin(B[0:N],D[0:N]) copyout(A[0:N])
     for (i = 0; i < N; i++)
     {
         A[i] = B[i] + 3.0 * D[i];

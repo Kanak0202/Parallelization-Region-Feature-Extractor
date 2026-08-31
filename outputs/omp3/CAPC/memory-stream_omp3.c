@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <omp.h>
 
 #define N 10000000
 
@@ -14,6 +13,7 @@ int main()
 
     /* ============================================================
        Region 1: Initialization
+       Write-only B and C
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -28,6 +28,7 @@ int main()
 
     /* ============================================================
        Region 2: Copy
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -41,6 +42,7 @@ int main()
 
     /* ============================================================
        Region 3: Scale
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -54,6 +56,7 @@ int main()
 
     /* ============================================================
        Region 4: Triad
+       Two loads + one store
        ============================================================ */
 
 #pragma capc profitability_region begin

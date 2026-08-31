@@ -1,18 +1,16 @@
 //Vector Arithmatic
 
 #include <stdio.h>
-#define SIZE 10000
+#define SIZE 100000000
 
 int main()
 {
 	double A[SIZE],B[SIZE],C[SIZE],D[SIZE],E[SIZE];
 	int i = 0;
 
-#pragma acc enter data create(A[0:SIZE],B[0:SIZE],C[0:SIZE],D[0:SIZE],E[0:SIZE])
-
 	//Array initialization
 #pragma capc profitability_region begin
-#pragma acc parallel loop present(A[0:SIZE],B[0:SIZE])
+#pragma acc parallel loop copyout(A[0:SIZE],B[0:SIZE])
 	for (i=0; i<SIZE; ++i)
 	{
 		A[i] = (double)i;
@@ -22,14 +20,12 @@ int main()
 
 	//C=A+B
 #pragma capc profitability_region begin
-#pragma acc parallel loop present(A[0:SIZE],B[0:SIZE],C[0:SIZE])
+#pragma acc parallel loop copyin(A[0:SIZE],B[0:SIZE]) copyout(C[0:SIZE])
 	for (i=0; i<SIZE; ++i)
 	{
 		C[i]=A[i]+B[i];
 	}
 #pragma capc profitability_region end
-
-#pragma acc update self(A[0:SIZE],B[0:SIZE],C[0:SIZE])
 
 	//Verify result
 	for (i=0; i<SIZE; ++i)
@@ -48,14 +44,12 @@ int main()
 
 	//D=A-B	
 #pragma capc profitability_region begin
-#pragma acc parallel loop present(A[0:SIZE],B[0:SIZE],D[0:SIZE])
+#pragma acc parallel loop copyin(A[0:SIZE],B[0:SIZE]) copyout(D[0:SIZE])
 	for (i=0; i<SIZE; ++i)
 	{
 		D[i]=A[i]-B[i];
 	}
 #pragma capc profitability_region end
-
-#pragma acc update self(D[0:SIZE])
 
 	//Verify result
 	for (i=0; i<SIZE; ++i)
@@ -74,14 +68,12 @@ int main()
 
 	//E=A*B
 #pragma capc profitability_region begin
-#pragma acc parallel loop present(A[0:SIZE],B[0:SIZE],E[0:SIZE])
+#pragma acc parallel loop copyin(A[0:SIZE],B[0:SIZE]) copyout(E[0:SIZE])
 	for (i=0; i<SIZE; ++i)
 	{
 		E[i]=A[i]*B[i];
 	}
 #pragma capc profitability_region end
-
-#pragma acc update self(E[0:SIZE])
 
 	//Verify result
 	for (i=0; i<SIZE; ++i)
@@ -97,8 +89,6 @@ int main()
 	{
 		printf("Mult : Everything seems to work fine! \n");
 	}
-
-#pragma acc exit data delete(A[0:SIZE],B[0:SIZE],C[0:SIZE],D[0:SIZE],E[0:SIZE])
 
 	return 0;
 }

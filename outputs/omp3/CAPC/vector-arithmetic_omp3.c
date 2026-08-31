@@ -1,7 +1,7 @@
 //Vector Arithmatic
 
 #include <stdio.h>
-#define SIZE 5
+#define SIZE 100000000
 
 int main()
 {
@@ -10,7 +10,7 @@ int main()
 
 	//Array initialization
 #pragma capc profitability_region begin
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		A[i] = (double)i;
@@ -20,7 +20,7 @@ int main()
 
 	//C=A+B
 #pragma capc profitability_region begin
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		C[i]=A[i]+B[i];
@@ -44,7 +44,7 @@ int main()
 
 	//D=A-B	
 #pragma capc profitability_region begin
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		D[i]=A[i]-B[i];
@@ -68,7 +68,7 @@ int main()
 
 	//E=A*B
 #pragma capc profitability_region begin
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		E[i]=A[i]*B[i];

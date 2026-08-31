@@ -1349,14 +1349,14 @@ def print_results(regions):
         ) / count
 
         avg_observed = (
-            reg["init_time"]
-            + reg["one_time_transfer_time"]
+            # reg["init_time"]
+            reg["one_time_transfer_time"]
             + avg_recurring_observed
         )
 
         total_observed_region = (
-            reg["init_time"]
-            + reg["one_time_transfer_time"]
+            # reg["init_time"]
+            reg["one_time_transfer_time"]
             + reg["recurring_transfer_time"]
             + reg["resident_time"]
         )

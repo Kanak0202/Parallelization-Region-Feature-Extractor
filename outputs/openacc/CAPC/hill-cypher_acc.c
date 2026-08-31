@@ -1,86 +1,79 @@
-#include<stdio.h>
-#include<math.h>
+// Hill Cipher - OpenACC Version
+// No user/file input
+// Message and key matrix are initialized internally
 
-#define N 13000
+#include <stdio.h>
+#include <math.h>
 
-int SIZE;
-
-float encrypt[N][1], a[N][N], b[N][N], mes[N][1], c[N][N];
-
-void encryption();
-void getKeyMessage();
+#define N 100
 
 int main()
 {
-        getKeyMessage();
-        encryption();
-        return 0;
-}
+	int i, j, k;
 
-void getKeyMessage()
-{
-        int i, j;
-        char msg[N];
+	float encrypt[N][1];
+	float a[N][N];
+	float mes[N][1];
 
-        SIZE=0;
+	/* ---------------------------------------------------------
+	   Message Initialization
+	   --------------------------------------------------------- */
 
-        FILE *fptr;
-
-        char ch,filename[15]="file.txt";
-
-        fptr = fopen(filename, "r");
-
-        if (fptr == NULL)
-        {
-                printf("Cannot open file \n");
-                return;
-        }
-
-        ch = fgetc(fptr);
-        while (ch != EOF)
-        {
-                msg[SIZE++]=ch;
-                ch = fgetc(fptr);
-        }
-
-        fclose(fptr);
-
-        printf("\nOriginal string");
-        for(i = 0; i < SIZE; i++)
-                printf("%c",msg[i]);
-
-        #pragma capc profitability_region begin
-        #pragma acc parallel loop copyin(msg[0:SIZE]) copyout(mes[0:SIZE][0:1])
-        for(i = 0; i < SIZE; i++)
-                mes[i][0] = msg[i] - 97;
-        #pragma capc profitability_region end
+	#pragma capc profitability_region begin
+	#pragma acc parallel loop copyout(mes[0:N][0:1],encrypt[0:N][0:1])
+	for(i = 0; i < N; i++)
+	{
+		mes[i][0] = (float)(i % 26);
+		encrypt[i][0] = 0.0f;
+	}
+	#pragma capc profitability_region end
 
 
-        #pragma capc profitability_region begin
-        #pragma acc parallel loop collapse(2) copyout(a[0:SIZE][0:SIZE],c[0:SIZE][0:SIZE])
-        for(i = 0; i < SIZE; i++)
-                for(j = 0; j < SIZE; j++)
-                {
-                        a[i][j]=i+j+1+'0';
-                        c[i][j] = a[i][j];
-                }
-        #pragma capc profitability_region end
-}
+	/* ---------------------------------------------------------
+	   Key Matrix Initialization
+	   --------------------------------------------------------- */
 
-void encryption()
-{
-        int i, j, k;
+	#pragma capc profitability_region begin
+	#pragma acc parallel loop collapse(2) copyout(a[0:N][0:N])
+	for(i = 0; i < N; i++)
+	{
+		for(j = 0; j < N; j++)
+		{
+			a[i][j] = (float)(i + j + 1 + '0');
+		}
+	}
+	#pragma capc profitability_region end
 
-        #pragma capc profitability_region begin
-        #pragma acc parallel loop collapse(2) copyin(a[0:SIZE][0:SIZE],mes[0:SIZE][0:1]) copy(encrypt[0:SIZE][0:1])
-        for(i = 0; i < SIZE; i++)
-                for(j = 0; j < 1; j++)
-                        for(k = 0; k < SIZE; k++)
-                                encrypt[i][j] = encrypt[i][j] + a[i][k] * mes[k][j];
-        #pragma capc profitability_region end
 
-        printf("\nEncrypted string is: ");
-        for(i = 0; i < SIZE; i++)
-                printf("%c", (char)(fmod(encrypt[i][0], 26) + 97));
+	/* ---------------------------------------------------------
+	   Hill Cipher Encryption
 
+	   encrypt = a * mes
+	   --------------------------------------------------------- */
+
+	#pragma capc profitability_region begin
+	#pragma acc parallel loop collapse(2) copyin(a[0:N][0:N],mes[0:N][0:1]) copy(encrypt[0:N][0:1])
+	for(i = 0; i < N; i++)
+	{
+		for(j = 0; j < 1; j++)
+		{
+			for(k = 0; k < N; k++)
+			{
+				encrypt[i][j] =
+					encrypt[i][j] +
+					a[i][k] * mes[k][j];
+			}
+		}
+	}
+	#pragma capc profitability_region end
+
+
+	printf("encrypt[0][0] = %f\n", encrypt[0][0]);
+	printf("encrypt[%d][0] = %f\n", N-1, encrypt[N-1][0]);
+
+	printf("Encrypted characters: ");
+	printf("%c ", (char)(fmod(encrypt[0][0], 26.0f) + 97));
+	printf("%c\n", (char)(fmod(encrypt[N-1][0], 26.0f) + 97));
+
+	return 0;
 }

@@ -25,15 +25,13 @@ void init();
 
 int main() {
 
-    int i, j;                                            // grid indexes
-    int max_iterations = NUM_ITERATIONS;                 // maximal number of iterations
-    int iteration = 15;                                  // iteration
-    double dt = 100;                                     // largest change in temperature
-    struct timeval start_time, stop_time, elapsed_time;  // timers
+    int i, j;
+    int max_iterations = NUM_ITERATIONS;
+    int iteration = 15;
+    double dt = 100;
+    struct timeval start_time, stop_time, elapsed_time;
 
     gettimeofday(&start_time, NULL);
-
-    #pragma acc enter data create(T[0:GRIDX+2][0:GRIDY+2],T_new[0:GRIDX+2][0:GRIDY+2])
 
     init();
 
@@ -42,7 +40,7 @@ int main() {
 
         // main computational kernel, average over neighbours in the grid
         #pragma capc profitability_region begin
-        #pragma acc parallel loop collapse(2) present(T[0:GRIDX+2][0:GRIDY+2],T_new[0:GRIDX+2][0:GRIDY+2])
+        #pragma acc parallel loop collapse(2) copyin(T[0:GRIDX+2][0:GRIDY+2]) copyout(T_new[0:GRIDX+2][0:GRIDY+2])
         for(i = 1; i <= GRIDX; i++)
             for(j = 1; j <= GRIDY; j++)
                 T_new[i][j] = 0.25 * (T[i+1][j] + T[i-1][j] +
@@ -54,7 +52,7 @@ int main() {
 
         // compute the largest change and copy T_new to T
         #pragma capc profitability_region begin
-        #pragma acc parallel loop collapse(2) reduction(max:dt) present(T[0:GRIDX+2][0:GRIDY+2],T_new[0:GRIDX+2][0:GRIDY+2])
+        #pragma acc parallel loop collapse(2) reduction(max:dt) copyin(T_new[0:GRIDX+2][0:GRIDY+2]) copy(T[0:GRIDX+2][0:GRIDY+2],dt)
         for(i = 1; i <= GRIDX; i++) {
             for(j = 1; j <= GRIDY; j++) {
                 dt = MAX(fabs(T_new[i][j] - T[i][j]), dt);
@@ -69,8 +67,6 @@ int main() {
 
         iteration++;
     }
-
-    #pragma acc exit data delete(T[0:GRIDX+2][0:GRIDY+2],T_new[0:GRIDX+2][0:GRIDY+2])
 
     gettimeofday(&stop_time, NULL);
     timersub(&stop_time, &start_time, &elapsed_time);
@@ -88,7 +84,7 @@ void init() {
     int i, j;
 
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(T[0:GRIDX+2][0:GRIDY+2])
+    #pragma acc parallel loop collapse(2) copyout(T[0:GRIDX+2][0:GRIDY+2])
     for(i = 0; i <= GRIDX+1; i++) {
         for(j = 0; j <= GRIDY+1; j++) {
             T[i][j] = 0.0;
@@ -100,7 +96,7 @@ void init() {
 
     // set left side to 0 and right to a linear increase
     #pragma capc profitability_region begin
-    #pragma acc parallel loop present(T[0:GRIDX+2][0:GRIDY+2])
+    #pragma acc parallel loop copy(T[0:GRIDX+2][0:GRIDY+2])
     for(i = 0; i <= GRIDX+1; i++) {
         T[i][0] = 0.0;
         T[i][GRIDY+1] = (128.0/GRIDX) * i;
@@ -109,7 +105,7 @@ void init() {
 
     // set top to 0 and bottom to linear increase
     #pragma capc profitability_region begin
-    #pragma acc parallel loop present(T[0:GRIDX+2][0:GRIDY+2])
+    #pragma acc parallel loop copy(T[0:GRIDX+2][0:GRIDY+2])
     for(j = 0; j <= GRIDY+1; j++) {
         T[0][j] = 0.0;
         T[GRIDX+1][j] = (128.0/GRIDY) * j;

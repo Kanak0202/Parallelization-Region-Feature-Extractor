@@ -11,9 +11,10 @@ int main()
 
 	//Array initialization
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j)
+    #pragma omp parallel for private(i,j)
 	for(i=0;i<n;i++)
 	{
+        #pragma omp parallel for private(j)
 		for(j=0;j<n;j++)
 		{
 			A[i][j]=(double)(0.1*i+j);
@@ -25,18 +26,24 @@ int main()
 
 	//Computations
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j)
+    #pragma omp parallel for private(i,j)
 	for (i = 1; i < n-1; i++)
+    {
+        #pragma omp parallel for private(j)
 		for (j = 1; j < n - 1; j++)
 			B[i][j] = 0.2 * (A[i][j] + A[i][j-1] + A[i][1+j] + A[1+i][j] + A[i-1][j]);
+    }
 
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-    #pragma omp parallel for collapse(2) private(i,j)
+    #pragma omp parallel for private(i,j)
 	for (i = 1; i < n - 1; i++)
+    {
+        #pragma omp parallel for private(j)
 		for (j = 1; j < n - 1; j++)
 			A[i][j] = 0.2 * (B[i][j] + B[i][j-1] + B[i][1+j] + B[1+i][j] + B[i-1][j]);
+    }
 
     #pragma capc profitability_region end
 

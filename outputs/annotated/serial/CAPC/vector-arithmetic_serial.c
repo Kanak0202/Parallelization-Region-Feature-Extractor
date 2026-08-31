@@ -21,7 +21,7 @@ static void __capc_report(void){
 }
 /* end CAPC timing support */
 
-#define SIZE 5
+#define SIZE 100000000
 
 int main()
 {

@@ -10,11 +10,8 @@ int main()
 	int i, j, k;
 
 	float A[n][n][n],B[n][n][n];
-
-    #pragma acc enter data create(A[0:n][0:n][0:n],B[0:n][0:n][0:n])
-
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(3) present(A,B)
+    #pragma acc parallel loop collapse(3) copyout(A[0:n][0:n][0:n],B[0:n][0:n][0:n])
 	for (i = 0; i < n; i++)
 		for (j = 0; j < n; j++)
 			for (k = 0; k < n; k++)
@@ -22,7 +19,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(3) present(A,B)
+    #pragma acc parallel loop collapse(3) copyin(A[0:n][0:n][0:n]) copy(B[0:n][0:n][0:n])
 	for (i = 1; i < n-1; i++) {
 		for (j = 1; j < n-1; j++) {
 			for (k = 1; k < n-1; k++) {
@@ -36,7 +33,7 @@ int main()
     #pragma capc profitability_region end
 
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(3) present(A,B)
+    #pragma acc parallel loop collapse(3) copyin(B[0:n][0:n][0:n]) copy(A[0:n][0:n][0:n])
 	for (i = 1; i < n-1; i++) {
 		for (j = 1; j < n-1; j++) {
 			for (k = 1; k < n-1; k++) {
@@ -48,8 +45,6 @@ int main()
 		}
 	}
     #pragma capc profitability_region end
-
-    #pragma acc update self(A[0:n][0:n][0:n],B[0:n][0:n][0:n])
 
 	printf("\nMatrix A :\n");
 	for (i = 0; i < n; i++)
@@ -64,8 +59,6 @@ int main()
 				printf("%f ",B[i][j][k]);
 
 	printf("\n");
-
-    #pragma acc exit data delete(A[0:n][0:n][0:n],B[0:n][0:n][0:n])
 
 	return 0;
 }
