@@ -1,6 +1,9 @@
 //3 Matrix Multiplications (E=A.B; F=C.D; G=E.F)
 
 #include<stdio.h>
+
+#define N 100
+
 #include <omp.h>
 
 /* CAPC timing support: generated */
@@ -22,8 +25,6 @@ static void __capc_report(void){
 /* end CAPC timing support */
 
 
-#define N 5000
-
 int main()
 {
     atexit(__capc_report);
@@ -33,9 +34,10 @@ int main()
 	//Array Initialization
     #pragma capc profitability_region begin
     double __capc_rs_0=omp_get_wtime();
-    #pragma omp parallel for collapse(2) private(i,j)
+	#pragma omp parallel for private(i,j)
 	for(i=0;i<N;i++)
 	{
+		#pragma omp parallel for private(j)
 		for(j=0;j<N;j++)
 		{
 			a[i][j]=(double)(0.1*i+j);	
@@ -44,7 +46,7 @@ int main()
 			d[i][j]=(double)(0.4*j+i);
 			e[i][j]=(double)(0.5*i+j);
 			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
+			result[i][j]=0.0;
 		}
 	}
     __capc_rt[0]+=omp_get_wtime()-__capc_rs_0;
@@ -54,15 +56,15 @@ int main()
 	//result = a.b
     #pragma capc profitability_region begin
     double __capc_rs_1=omp_get_wtime();
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+a[i][k]*b[k][j];
     __capc_rt[1]+=omp_get_wtime()-__capc_rs_1;
     __capc_rc[1]++;
     #pragma capc profitability_region end
-
 	//print a.b
 	
        printf("A[0][0]=%lf\n",result[0][0]);
@@ -83,8 +85,9 @@ int main()
 	//result = c.d
     #pragma capc profitability_region begin
     double __capc_rs_2=omp_get_wtime();
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+c[i][k]*d[k][j];
@@ -99,6 +102,7 @@ int main()
 
 #if 0
 
+
 	printf("\nResult=C.D\n");
 	for(i=0;i<N;i++)
 	{
@@ -112,8 +116,9 @@ int main()
 	//result = e.f
     #pragma capc profitability_region begin
     double __capc_rs_3=omp_get_wtime();
-    #pragma omp parallel for collapse(2) private(i,j,k)
+	#pragma omp parallel for private(i,j,k)
 	for (i = 0; i < N; i++)
+		#pragma omp parallel for private(j,k)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)
 				result[i][j]= result[i][j]+e[i][k]*f[k][j];

@@ -34,6 +34,7 @@ int main()
 
     /* ============================================================
        Region 1: Initialization
+       Write-only B and C
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -51,6 +52,7 @@ __capc_rc[0]++;
 
     /* ============================================================
        Region 2: Copy
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -67,6 +69,7 @@ __capc_rc[1]++;
 
     /* ============================================================
        Region 3: Scale
+       One load + one store
        ============================================================ */
 
 #pragma capc profitability_region begin
@@ -83,6 +86,7 @@ __capc_rc[2]++;
 
     /* ============================================================
        Region 4: Triad
+       Two loads + one store
        ============================================================ */
 
 #pragma capc profitability_region begin

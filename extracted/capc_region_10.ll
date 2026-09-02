@@ -4,84 +4,89 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 target triple = "x86_64-conda-linux-gnu"
 
 ; Function Attrs: nofree norecurse nosync nounwind memory(argmem: readwrite) uwtable
-define dso_local void @capc_region_10(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef readonly captures(none) %1, ptr noalias noundef readonly captures(none) %2, ptr noalias noundef writeonly captures(none) %3, ptr noalias noundef readonly captures(none) %4, ptr noalias noundef writeonly captures(none) %5, ptr noalias noundef readonly captures(none) %6, ptr noalias noundef writeonly captures(none) %7, ptr noalias noundef readonly captures(none) %8, ptr noalias noundef readnone captures(none) %9, ptr noalias noundef readnone captures(none) %10, ptr noalias noundef readnone captures(none) %11, ptr noalias noundef readnone captures(none) %12, ptr noalias noundef readnone captures(none) %13, ptr noalias noundef readnone captures(none) %14, ptr noalias noundef readnone captures(none) %15, ptr noalias noundef readnone captures(none) %16, ptr noalias noundef readnone captures(none) %17, ptr noalias noundef readnone captures(none) %18, ptr noalias noundef readnone captures(none) %19, ptr noalias noundef readnone captures(none) %20, ptr noalias noundef readnone captures(none) %21, ptr noalias noundef readonly captures(none) %22, ptr noalias noundef readnone captures(none) %23, ptr noalias noundef readonly captures(none) %24, double noundef %25, ptr noalias noundef readnone captures(none) %26, ptr noalias noundef readnone captures(none) %27, ptr noalias noundef readnone captures(none) %28, ptr noalias noundef readnone captures(none) %29, ptr noalias noundef readnone captures(none) %30, ptr noalias noundef readnone captures(none) %31, ptr noalias noundef readnone captures(none) %32, ptr noalias noundef readnone captures(none) %33, ptr noalias noundef readnone captures(none) %34, ptr noalias noundef readnone captures(none) %35, ptr noalias noundef readnone captures(none) %36, ptr noalias noundef readnone captures(none) %37, ptr noalias noundef readnone captures(none) %38, ptr noalias noundef readnone captures(none) %39, ptr noalias noundef readnone captures(none) %40, ptr noalias noundef readnone captures(none) %41, ptr noalias noundef readonly captures(none) %42, ptr noalias noundef readnone captures(none) %43, ptr noalias noundef writeonly captures(none) %44, ptr noalias noundef readonly captures(none) %45, ptr noalias noundef readonly captures(none) %46, ptr noalias noundef writeonly captures(none) %47, ptr noalias noundef writeonly captures(none) %48, ptr noalias noundef writeonly captures(none) %49, ptr noalias noundef readonly captures(none) %50, ptr noalias noundef readonly captures(none) %51, ptr noalias noundef writeonly captures(none) %52, ptr noalias noundef readonly captures(none) %53, ptr noalias noundef writeonly captures(none) %54, ptr noalias noundef readonly captures(none) %55, ptr noalias noundef captures(none) %56) local_unnamed_addr #0 {
-  br label %58
+define dso_local void @capc_region_10(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef readonly captures(none) %1, double noundef %2, ptr noalias noundef readonly captures(none) %3, ptr noalias noundef writeonly captures(none) %4, ptr noalias noundef readonly captures(none) %5, ptr noalias noundef readonly captures(none) %6, ptr noalias noundef writeonly captures(none) %7, ptr noalias noundef readonly captures(none) %8, ptr noalias noundef readonly captures(none) %9, ptr noalias noundef writeonly captures(none) %10, ptr noalias noundef readonly captures(none) %11, ptr noalias noundef readonly captures(none) %12, ptr noalias noundef writeonly captures(none) %13, ptr noalias noundef readonly captures(none) %14, ptr noalias noundef readonly captures(none) %15, ptr noalias noundef writeonly captures(none) %16, ptr noalias noundef readonly captures(none) %17, ptr noalias noundef readonly captures(none) %18, ptr noalias noundef writeonly captures(none) %19, ptr noalias noundef readonly captures(none) %20, ptr noalias noundef readonly captures(none) %21, ptr noalias noundef writeonly captures(none) %22, ptr noalias noundef readonly captures(none) %23, ptr noalias noundef readonly captures(none) %24, ptr noalias noundef writeonly captures(none) %25, ptr noalias noundef readonly captures(none) %26, ptr noalias noundef readonly captures(none) %27) local_unnamed_addr #0 {
+  %29 = fmul contract double %2, 5.000000e-01
+  br label %30
 
-58:                                               ; preds = %57, %58
-  %59 = phi i64 [ 0, %57 ], [ %109, %58 ]
-  %60 = getelementptr inbounds nuw double, ptr %1, i64 %59
+30:                                               ; preds = %28, %30
+  %31 = phi i64 [ 0, %28 ], [ %95, %30 ]
+  %32 = getelementptr inbounds nuw double, ptr %1, i64 %31
+  %33 = load double, ptr %32, align 8, !tbaa !9
+  %34 = getelementptr inbounds nuw double, ptr %3, i64 %31
+  %35 = load double, ptr %34, align 8, !tbaa !9
+  %36 = fmul contract double %29, %35
+  %37 = fadd contract double %33, %36
+  %38 = getelementptr inbounds nuw double, ptr %0, i64 %31
+  store double %37, ptr %38, align 8, !tbaa !9
+  %39 = getelementptr inbounds nuw double, ptr %5, i64 %31
+  %40 = load double, ptr %39, align 8, !tbaa !9
+  %41 = getelementptr inbounds nuw double, ptr %6, i64 %31
+  %42 = load double, ptr %41, align 8, !tbaa !9
+  %43 = fmul contract double %29, %42
+  %44 = fadd contract double %40, %43
+  %45 = getelementptr inbounds nuw double, ptr %4, i64 %31
+  store double %44, ptr %45, align 8, !tbaa !9
+  %46 = getelementptr inbounds nuw double, ptr %8, i64 %31
+  %47 = load double, ptr %46, align 8, !tbaa !9
+  %48 = getelementptr inbounds nuw double, ptr %9, i64 %31
+  %49 = load double, ptr %48, align 8, !tbaa !9
+  %50 = fmul contract double %29, %49
+  %51 = fadd contract double %47, %50
+  %52 = getelementptr inbounds nuw double, ptr %7, i64 %31
+  store double %51, ptr %52, align 8, !tbaa !9
+  %53 = getelementptr inbounds nuw double, ptr %11, i64 %31
+  %54 = load double, ptr %53, align 8, !tbaa !9
+  %55 = getelementptr inbounds nuw double, ptr %12, i64 %31
+  %56 = load double, ptr %55, align 8, !tbaa !9
+  %57 = fmul contract double %29, %56
+  %58 = fadd contract double %54, %57
+  %59 = getelementptr inbounds nuw double, ptr %10, i64 %31
+  store double %58, ptr %59, align 8, !tbaa !9
+  %60 = getelementptr inbounds nuw double, ptr %14, i64 %31
   %61 = load double, ptr %60, align 8, !tbaa !9
-  %62 = getelementptr inbounds nuw double, ptr %4, i64 %59
+  %62 = getelementptr inbounds nuw double, ptr %15, i64 %31
   %63 = load double, ptr %62, align 8, !tbaa !9
-  %64 = getelementptr inbounds nuw double, ptr %6, i64 %59
-  %65 = load double, ptr %64, align 8, !tbaa !9
-  %66 = getelementptr inbounds nuw double, ptr %45, i64 %59
-  %67 = load double, ptr %66, align 8, !tbaa !9
-  %68 = getelementptr inbounds nuw double, ptr %46, i64 %59
-  %69 = load double, ptr %68, align 8, !tbaa !9
-  %70 = fadd contract double %67, %69
-  %71 = fmul contract double %70, 0xBFD5555555555555
-  %72 = fadd contract double %67, %71
-  %73 = fmul contract double %72, 1.385600e+01
-  %74 = fmul contract double %65, 2.000000e+00
-  %75 = getelementptr inbounds nuw double, ptr %42, i64 %59
-  %76 = load double, ptr %75, align 8, !tbaa !9
-  %77 = fmul contract double %74, %76
-  %78 = fadd contract double %77, %73
-  %79 = getelementptr inbounds nuw double, ptr %47, i64 %59
-  store double %78, ptr %79, align 8, !tbaa !9
-  %80 = fadd contract double %69, %71
-  %81 = fmul contract double %80, 1.385600e+01
-  %82 = fsub contract double %81, %77
-  %83 = getelementptr inbounds nuw double, ptr %48, i64 %59
-  store double %82, ptr %83, align 8, !tbaa !9
-  %84 = getelementptr inbounds nuw double, ptr %50, i64 %59
-  %85 = load double, ptr %84, align 8, !tbaa !9
-  %86 = getelementptr inbounds nuw double, ptr %51, i64 %59
-  %87 = load double, ptr %86, align 8, !tbaa !9
-  %88 = fadd contract double %85, %87
-  %89 = fmul contract double %88, 6.928000e+00
-  %90 = fsub contract double %61, %63
-  %91 = fmul contract double %90, %76
-  %92 = fsub contract double %89, %91
-  %93 = getelementptr inbounds nuw double, ptr %49, i64 %59
-  store double %92, ptr %93, align 8, !tbaa !9
-  %94 = getelementptr inbounds nuw double, ptr %22, i64 %59
-  %95 = load double, ptr %94, align 8, !tbaa !9
-  %96 = getelementptr inbounds nuw double, ptr %53, i64 %59
-  %97 = load double, ptr %96, align 8, !tbaa !9
-  %98 = fadd contract double %95, %97
-  %99 = getelementptr inbounds nuw double, ptr %52, i64 %59
-  store double %98, ptr %99, align 8, !tbaa !9
-  %100 = getelementptr inbounds nuw double, ptr %24, i64 %59
-  %101 = load double, ptr %100, align 8, !tbaa !9
-  %102 = getelementptr inbounds nuw double, ptr %55, i64 %59
-  %103 = load double, ptr %102, align 8, !tbaa !9
-  %104 = fadd contract double %101, %103
-  %105 = getelementptr inbounds nuw double, ptr %54, i64 %59
-  store double %104, ptr %105, align 8, !tbaa !9
-  %106 = getelementptr inbounds nuw double, ptr %56, i64 %59
-  %107 = load double, ptr %106, align 8, !tbaa !9
-  %108 = fmul contract double %107, -5.000000e-01
-  store double %108, ptr %106, align 8, !tbaa !9
-  %109 = add nuw nsw i64 %59, 1
-  %110 = icmp eq i64 %109, 2558
-  br i1 %110, label %111, label %58, !llvm.loop !11
+  %64 = fmul contract double %29, %63
+  %65 = fadd contract double %61, %64
+  %66 = getelementptr inbounds nuw double, ptr %13, i64 %31
+  store double %65, ptr %66, align 8, !tbaa !9
+  %67 = getelementptr inbounds nuw double, ptr %17, i64 %31
+  %68 = load double, ptr %67, align 8, !tbaa !9
+  %69 = getelementptr inbounds nuw double, ptr %18, i64 %31
+  %70 = load double, ptr %69, align 8, !tbaa !9
+  %71 = fmul contract double %29, %70
+  %72 = fadd contract double %68, %71
+  %73 = getelementptr inbounds nuw double, ptr %16, i64 %31
+  store double %72, ptr %73, align 8, !tbaa !9
+  %74 = getelementptr inbounds nuw double, ptr %20, i64 %31
+  %75 = load double, ptr %74, align 8, !tbaa !9
+  %76 = getelementptr inbounds nuw double, ptr %21, i64 %31
+  %77 = load double, ptr %76, align 8, !tbaa !9
+  %78 = fmul contract double %29, %77
+  %79 = fadd contract double %75, %78
+  %80 = getelementptr inbounds nuw double, ptr %19, i64 %31
+  store double %79, ptr %80, align 8, !tbaa !9
+  %81 = getelementptr inbounds nuw double, ptr %23, i64 %31
+  %82 = load double, ptr %81, align 8, !tbaa !9
+  %83 = getelementptr inbounds nuw double, ptr %24, i64 %31
+  %84 = load double, ptr %83, align 8, !tbaa !9
+  %85 = fmul contract double %29, %84
+  %86 = fadd contract double %82, %85
+  %87 = getelementptr inbounds nuw double, ptr %22, i64 %31
+  store double %86, ptr %87, align 8, !tbaa !9
+  %88 = getelementptr inbounds nuw double, ptr %26, i64 %31
+  %89 = load double, ptr %88, align 8, !tbaa !9
+  %90 = getelementptr inbounds nuw double, ptr %27, i64 %31
+  %91 = load double, ptr %90, align 8, !tbaa !9
+  %92 = fmul contract double %29, %91
+  %93 = fadd contract double %89, %92
+  %94 = getelementptr inbounds nuw double, ptr %25, i64 %31
+  store double %93, ptr %94, align 8, !tbaa !9
+  %95 = add nuw nsw i64 %31, 1
+  %96 = icmp eq i64 %95, 1000000000
+  br i1 %96, label %97, label %30, !llvm.loop !11
 
-111:                                              ; preds = %58
-  %112 = getelementptr inbounds nuw i8, ptr %2, i64 20456
-  %113 = load double, ptr %112, align 8, !tbaa !9
-  %114 = fadd contract double %61, %113
-  %115 = fadd contract double %113, %63
-  %116 = getelementptr inbounds nuw i8, ptr %8, i64 20456
-  %117 = load double, ptr %116, align 8, !tbaa !9
-  %118 = fmul contract double %117, %117
-  %119 = fdiv contract double 1.000000e+00, %118
-  store double %114, ptr %0, align 8, !tbaa !9
-  store double %115, ptr %3, align 8, !tbaa !9
-  store double %65, ptr %5, align 8, !tbaa !9
-  store double %119, ptr %7, align 8, !tbaa !9
-  store double %71, ptr %44, align 8, !tbaa !9
+97:                                               ; preds = %30
   ret void
 }
 

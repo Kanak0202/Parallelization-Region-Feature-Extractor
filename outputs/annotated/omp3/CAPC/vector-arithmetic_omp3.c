@@ -21,7 +21,7 @@ static void __capc_report(void){
 }
 /* end CAPC timing support */
 
-#define SIZE 5
+#define SIZE 100000000
 
 int main()
 {
@@ -32,7 +32,7 @@ int main()
 	//Array initialization
 #pragma capc profitability_region begin
 double __capc_rs_0=omp_get_wtime();
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		A[i] = (double)i;
@@ -45,7 +45,7 @@ __capc_rc[0]++;
 	//C=A+B
 #pragma capc profitability_region begin
 double __capc_rs_1=omp_get_wtime();
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		C[i]=A[i]+B[i];
@@ -72,7 +72,7 @@ __capc_rc[1]++;
 	//D=A-B	
 #pragma capc profitability_region begin
 double __capc_rs_2=omp_get_wtime();
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		D[i]=A[i]-B[i];
@@ -99,7 +99,7 @@ __capc_rc[2]++;
 	//E=A*B
 #pragma capc profitability_region begin
 double __capc_rs_3=omp_get_wtime();
-#pragma omp parallel for
+#pragma omp parallel for private(i)
 	for (i=0; i<SIZE; ++i)
 	{
 		E[i]=A[i]*B[i];

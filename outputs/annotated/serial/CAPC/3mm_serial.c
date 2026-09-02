@@ -43,7 +43,7 @@ int main()
 			d[i][j]=(double)(0.4*j+i);
 			e[i][j]=(double)(0.5*i+j);
 			f[i][j]=(double)(0.6*j+i);
-			result[i][j]=0.0; printf("");
+			result[i][j]=0.0;
 		}
 	}
     __capc_rt[0]+=omp_get_wtime()-__capc_rs_0;

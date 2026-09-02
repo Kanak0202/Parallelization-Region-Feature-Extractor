@@ -3,24 +3,18 @@
 #include <stdlib.h>
 void initialize();
 void derivatives();
-void kernel(double wf[], double dist );
+void kernel(double wf[], double dist);
 void Update(double dt);
-void callprint(int loopcounter);
 void plasticity();
-void viscosity(double visc[], int i, int j, double xij, double yij, double vxij, double vyij, double dist, double wf[], double wf_grad, double wfdx, double wfdy);
-void consistency();
-void artificial_pressure(double Pi, double Pj, double rho2i, double rho2j, double wf[], double xij, double yij, double dist, int i, int j, double vxij, double vyij, double wf_grad, double wfdx, double wfdy);
-void monacorr(int i, int j, double wf[], double vxij, double vyij, double wf_grad, double wfdx, double wfdy);
-void basicsph(int i,int j,double wf[], double xij, double yij, double vxij, double vyij, double rho2i, double rho2j, double dist, double sigxxi, double sigyyi, double sigxyi, double sigxxj, double sigyyj, double sigxyj, double drhobar, double wf_grad, double wfdx, double wfdy);
-#define NX      50
-#define NY      50
+    double ci = sqrt(EMOD / RHO[i]);
+    double cj = sqrt(EMOD / RHO[j]);
+#define N       1000000000
+#define NB      (N/2)
 #define DY      1.0
-#define N       2558
-#define NB      1000000000
 #define RHO0    1.1547
-#define MASSP   1.00 //Comes from consistency
+#define MASSP   1.00
 #define MASSB   1.00
-#define VRING   0.10//-04.0
+#define VRING   0.10
 #define SIGMA   0.80
 #define EPS     50.0
 #define RADIUS  3
@@ -33,26 +27,59 @@ void basicsph(int i,int j,double wf[], double xij, double yij, double vxij, doub
 #define B       13.856
 #define YIELD   1.360
 #define ULTI    4.270
-#define NPRINT  5
 #define alpha   0.50
 #define beta    0.50
 #define ART_VISCOSITY 1
 #define MONA_CORR     1
 #define MONA_CORR2    2
-#define JAUMANN      1
+#define JAUMANN       1
 #define TENSILE       1
 #define GRADCORR      1
 #define ri      15.00
 #define ro      20.00
 
-void capc_region_12(double (* restrict VX), double (* restrict VXBAR), double (* restrict VY), double (* restrict VYBAR))
+void capc_region_12(int ball_particles, int plate_particles, double* restrict angle, double pi, double* restrict radius, double (* restrict X), double (* restrict Y), double (* restrict VX), double (* restrict VY), double (* restrict E), double (* restrict MASS), double (* restrict RHO), double (* restrict SXX), double (* restrict SXY), double (* restrict SYY), double (* restrict DAMAGE), double (* restrict DeltaWP))
 {
     int i;
-    for(i=0;i<N;i++)	{
-    	if(MONA_CORR2 == 1)     {
-    		VX[i]   = VX[i] + VXBAR[i];
-            VY[i]   = VY[i] + VYBAR[i];
-    	}
+    for(i = 0; i < ball_particles; i++)
+    {
+        int idx = plate_particles + i;
+
+        (*angle) =
+            2.0 * pi *
+            (double)i /
+            (double)ball_particles;
+
+        (*radius) =
+            ri +
+            (ro-ri) *
+            ((double)(i % 100) / 100.0);
+
+
+        X[idx] =
+            87.0 +
+            (*radius) * cos((*angle));
+
+        Y[idx] =
+            (*radius) * sin((*angle));
+
+
+        VX[idx] = -VRING;
+        VY[idx] = 0.0;
+
+        E[idx] = 0.0;
+
+        MASS[idx] = MASSB;
+
+        RHO[idx] = RHO0;
+
+        SXX[idx] = 0.0;
+        SXY[idx] = 0.0;
+        SYY[idx] = 0.0;
+
+        DAMAGE[idx] = 0.0;
+
+        DeltaWP[idx] = 0.0;
     }
 
 }

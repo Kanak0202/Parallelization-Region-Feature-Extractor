@@ -33,8 +33,9 @@ int main()
 	float A[n][n][n],B[n][n][n];
     #pragma capc profitability_region begin
     double __capc_rs_0=omp_get_wtime();
-    #pragma omp parallel for collapse(3) private(i,j,k)
+    #pragma omp parallel for private(i,j,k)
 	for (i = 0; i < n; i++)
+        #pragma omp parallel for private(j,k)
 		for (j = 0; j < n; j++)
 			for (k = 0; k < n; k++)
 				A[i][j][k] = B[i][j][k] = (float) (i + j + (n-k))* 10 / (n);
@@ -44,8 +45,9 @@ int main()
 
     #pragma capc profitability_region begin
     double __capc_rs_1=omp_get_wtime();
-    #pragma omp parallel for collapse(3) private(i,j,k)
+    #pragma omp parallel for private(i,j,k)
 	for (i = 1; i < n-1; i++) {
+        #pragma omp parallel for private(j,k)
 		for (j = 1; j < n-1; j++) {
 			for (k = 1; k < n-1; k++) {
 				B[i][j][k] = 0.125 * (A[i+1][j][k] - (2.0) * A[i][j][k] + A[i-1][j][k])
@@ -61,8 +63,9 @@ int main()
 
     #pragma capc profitability_region begin
     double __capc_rs_2=omp_get_wtime();
-    #pragma omp parallel for collapse(3) private(i,j,k)
+    #pragma omp parallel for private(i,j,k)
 	for (i = 1; i < n-1; i++) {
+        #pragma omp parallel for private(j,k)
 		for (j = 1; j < n-1; j++) {
 			for (k = 1; k < n-1; k++) {
 				A[i][j][k] = 0.125 * (B[i+1][j][k] - (2.0) * B[i][j][k] + B[i-1][j][k])

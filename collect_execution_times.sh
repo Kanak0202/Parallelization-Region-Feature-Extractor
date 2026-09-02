@@ -66,7 +66,7 @@
 ulimit -s unlimited
 
 if [ $# -ne 1 ]; then
-    echo "Usage: $0 <features.csv>"
+    echo "Usage: $0 <features2.csv>"
     exit 1
 fi
 
