@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-#define N 49000000
+#define N 1000
 #define T 500
 
 double a[N];

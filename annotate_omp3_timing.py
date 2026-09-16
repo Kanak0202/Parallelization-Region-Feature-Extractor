@@ -109,9 +109,34 @@ def main():
     if not files: print('No .c files found',file=sys.stderr); return 2
     ok=bad=0
     for f in files:
-        o=dest/f.relative_to(inp); o.parent.mkdir(parents=True,exist_ok=True)
-        try: o.write_text(annotate(f.read_text(encoding='utf-8')),encoding='utf-8'); print('[OK]',f,'->',o); ok+=1
-        except Exception as e: print('[ERROR]',f,e,file=sys.stderr); bad+=1
+        o = dest / f.relative_to(inp)
+        o.parent.mkdir(parents=True, exist_ok=True)
+    
+        try:
+            source = f.read_text(encoding='utf-8')
+    
+            # If the OpenMP3 source is empty, it means this program
+            # had no parallelizable CAPC region and was intentionally
+            # left empty by the previous transformation stage.
+            if not source.strip():
+                print('[SKIP]', f, '- empty OpenMP3 source')
+                continue
+    
+            # If there are no CAPC profitability regions, there is
+            # nothing for this annotator to time.
+            if not any(BEGIN.match(line) for line in source.splitlines()):
+                print('[SKIP]', f, '- no CAPC profitability region')
+                continue
+    
+            annotated = annotate(source)
+            o.write_text(annotated, encoding='utf-8')
+    
+            print('[OK]', f, '->', o)
+            ok += 1
+    
+        except Exception as e:
+            print('[ERROR]', f, e, file=sys.stderr)
+            bad += 1
     print(f'Completed {MODE}: {ok} written, {bad} failed. Output: {dest}')
     return 1 if bad else 0
 if __name__=='__main__': raise SystemExit(main())

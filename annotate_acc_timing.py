@@ -83,9 +83,9 @@ def _profiler_metrics(reg):
     avg_recurring_observed = (resident_total + recurring) / count
 
     # IMPORTANT: one-time initialization/setup is NOT amortized.
-    avg_observed = init_time + one_time + avg_recurring_observed
+    avg_observed = one_time + avg_recurring_observed
 
-    total_observed = init_time + one_time + recurring + resident_total
+    total_observed = one_time + recurring + resident_total
 
     return {
         "invocations": actual_count,

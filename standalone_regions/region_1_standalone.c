@@ -26,7 +26,6 @@ int main(void)
     double A[SIZE],B[SIZE],C[SIZE],D[SIZE],E[SIZE];
     	int i = 0;
     
-    
     	//Array initialization
 
     /* === GPU/OpenACC Runtime Initialization === */

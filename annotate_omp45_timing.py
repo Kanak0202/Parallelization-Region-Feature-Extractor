@@ -2871,9 +2871,8 @@ def _capc_region_metrics(reg):
     avg_recurring = (
         reg["resident_time"] + reg["recurring_transfer_time"]
     ) / count
-    avg_obs = reg["init_time"] + reg["one_time_transfer_time"] + avg_recurring
+    avg_obs = reg["one_time_transfer_time"] + avg_recurring
     total_obs = (
-        reg["init_time"]
         + reg["one_time_transfer_time"]
         + reg["recurring_transfer_time"]
         + reg["resident_time"]
