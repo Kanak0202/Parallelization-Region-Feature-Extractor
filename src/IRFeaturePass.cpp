@@ -263,6 +263,7 @@ void extractIRFeatures(llvm::Function &F,
     {
         for (llvm::Loop *SubL : llvm::depth_first(L))
         {
+            collectInductionVarInstrs(SubL, SE, excludedFromArith);
             auto *Latch = SubL->getLoopLatch();
             if (!Latch)
                 continue;
@@ -351,7 +352,8 @@ void extractIRFeatures(llvm::Function &F,
                     break;
                 case llvm::Instruction::SDiv:
                 case llvm::Instruction::UDiv:
-                    FV.intDivision++;
+                    if (!excluded)
+                        FV.intDivision++;
                     break;
                 case llvm::Instruction::FDiv:
                     FV.floatDivision++;

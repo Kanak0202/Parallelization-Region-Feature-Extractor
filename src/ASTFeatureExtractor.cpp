@@ -157,6 +157,22 @@ void ASTFeatureExtractor::extractArraysAccessed(
 }
 
 //
+// Collects variables declared inside the loop body. Such a variable is
+// re-initialized every iteration, so a self-update like `x = x * 1.5`
+// carries no dependence across iterations and is not a reduction.
+//
+class LocalDeclVisitor : public clang::RecursiveASTVisitor<LocalDeclVisitor> {
+public:
+    llvm::SmallPtrSet<const clang::VarDecl*, 8> locals;
+    bool VisitDeclStmt(clang::DeclStmt *DS) {
+        for (const clang::Decl *D : DS->decls())
+            if (auto *VD = llvm::dyn_cast<clang::VarDecl>(D))
+                locals.insert(VD);
+        return true;
+    }
+};
+
+//
 //Helper visitor for reductions
 //
 
@@ -164,6 +180,7 @@ class ReductionVisitor: public clang::RecursiveASTVisitor<ReductionVisitor>{
 public:
     clang::ASTContext *Context = nullptr;
     llvm::SmallPtrSet<const clang::ValueDecl*, 8> reductionVars;
+    llvm::SmallPtrSet<const clang::VarDecl*, 8> loopLocalVars;
     const clang::VarDecl *innermostInductionVar = nullptr; // set by caller
 
     bool VisitCompoundAssignOperator(clang::CompoundAssignOperator *CAO) {
@@ -204,9 +221,13 @@ public:
 private:
     void classifyScalar(clang::Expr *LHS) {
         LHS = LHS->IgnoreParenImpCasts();
-        if (auto *DRE = llvm::dyn_cast<clang::DeclRefExpr>(LHS))
-            if (auto *VD = llvm::dyn_cast<clang::VarDecl>(DRE->getDecl()))
-                reductionVars.insert(VD);
+        auto *DRE = llvm::dyn_cast<clang::DeclRefExpr>(LHS);
+        if (!DRE) return;
+        auto *VD = llvm::dyn_cast<clang::VarDecl>(DRE->getDecl());
+        if (!VD) return;
+        if (loopLocalVars.count(VD))
+            return;                     // loop-local temp, not a reduction
+        reductionVars.insert(VD);
     }
 
     void classifyArray(clang::Expr *LHS, clang::Expr * /*RHS*/) {
@@ -320,9 +341,13 @@ void ASTFeatureExtractor::extractReductionVariables(
     clang::ForStmt *FS,
     clang::ASTContext *Context)
 {
+    LocalDeclVisitor locals;
+    locals.TraverseStmt(FS->getBody());
+
     ReductionVisitor visitor;
     visitor.Context = Context;
     visitor.innermostInductionVar = getInductionVar(FS); // FS's own induction var, not the innermost nested loop
+    visitor.loopLocalVars = std::move(locals.locals);
     visitor.TraverseStmt(FS->getBody());
     info.features.reductions = visitor.reductionVars.size();
 }
