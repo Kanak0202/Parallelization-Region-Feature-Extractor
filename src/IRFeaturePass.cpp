@@ -376,6 +376,9 @@ void extractIRFeatures(llvm::Function &F,
                                     classifiedIndirectPtrs, FV);
                     break;
                 }
+                case llvm::Instruction::Select:
+                    FV.selectStmtCount++;
+                    break;
                 case llvm::Instruction::Br: {
                     auto *BrI = llvm::cast<llvm::BranchInst>(&I);
                     if (!BrI->isConditional())

@@ -40,6 +40,8 @@ struct FeatureVector
     int arraysAccessed = 0;
 
     int branchCount = 0;
+
+    int selectStmtCount = 0;
 };
 
 #endif
