@@ -3178,27 +3178,26 @@ FEATURES_CSV_OVERRIDE=""
 # Command-line arguments
 # ----------------------------------------------------------------------------
 
+REFRESH_FEATURES_CSV=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
 
         --start-phase)
-            if [[ -z "${2:-}" ]]; then
-                echo "ERROR: --start-phase requires a value."
-                echo "Valid values: 1, 2, 3"
-                exit 1
-            fi
-
-            START_PHASE="$2"
-            shift 2
+            ...
             ;;
 
         --features-csv)
+            ...
+            ;;
+
+        --refresh-features)
             if [[ -z "${2:-}" ]]; then
-                echo "ERROR: --features-csv requires a CSV file."
+                echo "ERROR: --refresh-features requires an existing CSV file."
                 exit 1
             fi
 
-            FEATURES_CSV_OVERRIDE="$2"
+            REFRESH_FEATURES_CSV="$2"
             shift 2
             ;;
 
@@ -3212,8 +3211,11 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --start-phase 2 --features-csv features_2.csv"
             echo "      Skip Phase 1 and start from Phase 2."
             echo
-            echo "  $0 --start-phase 3 --features-csv features_2.csv"
-            echo "      Skip Phases 1 and 2 and start from Phase 3."
+            echo "  $0 --refresh-features features.csv"
+            echo "      Re-run the static feature extractor and update ONLY"
+            echo "      the extractor-derived columns in features.csv."
+            echo "      Existing timing columns (Serial/OpenMP3/OpenMP4.5/OpenACC)"
+            echo "      are left untouched. Nothing else runs."
             echo
             echo "Options:"
             echo "  --start-phase N"
@@ -3222,6 +3224,10 @@ while [[ $# -gt 0 ]]; do
             echo "  --features-csv FILE"
             echo "      Existing feature CSV to use when starting"
             echo "      from Phase 2 or later."
+            echo
+            echo "  --refresh-features FILE"
+            echo "      Regenerate static features only, merging into FILE"
+            echo "      in place. Timing columns are preserved."
             echo
             exit 0
             ;;
@@ -3233,6 +3239,241 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# ============================================================================
+# REFRESH STATIC FEATURES IN AN EXISTING CSV
+#
+# Re-runs the AST + LLVM feature extractor exactly as Phase 1 does, then
+# merges the freshly extracted columns into an existing features CSV,
+# matched on (FileName, RegionID).
+#
+# Timing columns already present in the existing CSV are NEVER touched,
+# even if the newly extracted row order or region count differs.
+#
+# Rows present in the OLD csv but absent from the NEW extraction are kept
+# as-is (their feature columns are stale but timings are preserved).
+# Rows present in the NEW extraction but absent from the OLD csv are
+# appended with empty timing columns.
+# ============================================================================
+
+refresh_static_features()
+{
+    local TARGET_CSV="$1"
+
+    echo
+    echo "======================================================================"
+    echo "REFRESH: STATIC FEATURE EXTRACTION"
+    echo "======================================================================"
+    echo "Target CSV (in place):"
+    echo "    $TARGET_CSV"
+
+
+    # Re-use the normal extraction pipeline, but write to a private
+    # scratch CSV rather than the real FEATURES_CSV, so a failure midway
+    # never corrupts the existing file.
+
+    local OLD_FEATURES_CSV="$FEATURES_CSV"
+
+    FEATURES_CSV="$WORK_DIR/refreshed_features.csv"
+
+    generate_static_features
+
+    local NEW_CSV="$FEATURES_CSV"
+
+    FEATURES_CSV="$OLD_FEATURES_CSV"
+
+
+    echo
+    echo "----------------------------------------------------------------------"
+    echo "Merging refreshed features into existing CSV..."
+    echo "----------------------------------------------------------------------"
+
+
+    local MERGE_LOG="$TEMP_LOG_DIR/refresh_merge.log"
+
+
+    python3 - \
+        "$TARGET_CSV" \
+        "$NEW_CSV" \
+        > "$MERGE_LOG" 2>&1 <<'PY'
+
+import csv
+import os
+import sys
+
+
+old_csv = sys.argv[1]
+new_csv = sys.argv[2]
+
+
+TIME_COLUMNS = [
+    "SerialTime",
+    "OpenMP3Time",
+    "OpenMP45ResidentTime",
+    "OpenMP45ObservedTime",
+    "OpenMP45IsolatedTime",
+    "OpenACCResidentTime",
+    "OpenACCObservedTime",
+    "OpenACCIsolatedTime",
+]
+
+
+def fail(message):
+    print(f"ERROR: {message}")
+    sys.exit(1)
+
+
+def load(path):
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    return fieldnames, rows
+
+
+def key_of(row):
+    filename = os.path.basename(row.get("FileName", ""))
+    region = row.get("RegionID", "")
+    return (filename, region)
+
+
+old_fields, old_rows = load(old_csv)
+new_fields, new_rows = load(new_csv)
+
+missing_time_cols = [c for c in TIME_COLUMNS if c not in old_fields]
+if missing_time_cols:
+    fail(
+        "Existing CSV is missing expected timing column(s): "
+        + ", ".join(missing_time_cols)
+    )
+
+old_by_key = {key_of(r): r for r in old_rows}
+new_by_key = {key_of(r): r for r in new_rows}
+
+# Final column order: feature columns from the NEW extraction (this is
+# authoritative for feature schema, e.g. a newly added Select Count
+# column), followed by any timing columns from the OLD csv that aren't
+# already present.
+merged_fields = list(new_fields)
+for c in TIME_COLUMNS:
+    if c not in merged_fields:
+        merged_fields.append(c)
+
+merged_rows = []
+updated = 0
+appended = 0
+kept_stale = 0
+
+seen_keys = set()
+
+# Walk new extraction rows first, preserving its ordering.
+for key, new_row in new_by_key.items():
+    seen_keys.add(key)
+
+    old_row = old_by_key.get(key)
+
+    merged = dict(new_row)
+
+    if old_row is not None:
+        for c in TIME_COLUMNS:
+            merged[c] = old_row.get(c, "")
+        updated += 1
+    else:
+        for c in TIME_COLUMNS:
+            merged[c] = ""
+        appended += 1
+
+    merged_rows.append(merged)
+
+# Any old rows whose (FileName, RegionID) no longer appear in the new
+# extraction are preserved as-is, so previously collected timings are
+# never silently discarded.
+for key, old_row in old_by_key.items():
+    if key in seen_keys:
+        continue
+
+    merged = {c: old_row.get(c, "") for c in merged_fields}
+    merged_rows.append(merged)
+    kept_stale += 1
+
+
+temp_csv = old_csv + f".tmp.{os.getpid()}"
+
+try:
+    with open(temp_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=merged_fields)
+        writer.writeheader()
+        writer.writerows(merged_rows)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_csv, old_csv)
+
+except Exception:
+    try:
+        if os.path.exists(temp_csv):
+            os.remove(temp_csv)
+    finally:
+        raise
+
+
+print(
+    f"Merge complete: {updated} row(s) updated with fresh features "
+    f"(timings preserved), {appended} new row(s) appended "
+    f"(no timings yet), {kept_stale} old row(s) kept unchanged "
+    f"(not present in new extraction)."
+)
+
+PY
+
+
+    local STATUS=$?
+
+
+    if [ $STATUS -ne 0 ]; then
+
+        echo
+        echo "ERROR: Feature refresh merge FAILED."
+        echo "See log:"
+        echo "    $MERGE_LOG"
+
+        exit 1
+
+    fi
+
+
+    cat "$MERGE_LOG"
+
+    rm -f "$MERGE_LOG"
+
+
+    echo
+    echo "Feature refresh complete. Timing columns were not modified."
+    echo
+    echo "Updated CSV:"
+    echo "    $TARGET_CSV"
+}
+
+if [[ -n "$REFRESH_FEATURES_CSV" ]]; then
+
+    if [[ ! -f "$REFRESH_FEATURES_CSV" ]]; then
+        echo
+        echo "ERROR: --refresh-features target not found:"
+        echo "    $REFRESH_FEATURES_CSV"
+        exit 1
+    fi
+
+    validate_environment
+
+    refresh_static_features "$REFRESH_FEATURES_CSV"
+
+    echo
+    echo "======================================================================"
+    echo "                  FEATURE REFRESH COMPLETE"
+    echo "======================================================================"
+
+    exit 0
+fi
 
 
 # ----------------------------------------------------------------------------

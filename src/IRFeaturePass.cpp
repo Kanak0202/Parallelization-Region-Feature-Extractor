@@ -149,7 +149,7 @@ bool isSpecialMathCall(llvm::StringRef Name)
     static const llvm::StringSet<> SpecialFns = {
         "sqrt", "sqrtf", "sin", "sinf", "cos", "cosf",
         "exp", "expf", "log", "logf", "pow", "powf",
-        "tan", "tanf", "sincos"
+        "tan", "tanf", "sincos", "fmod", "fmodf"
     };
     return SpecialFns.count(Name) > 0;
 }
@@ -376,6 +376,19 @@ void extractIRFeatures(llvm::Function &F,
                                     classifiedIndirectPtrs, FV);
                     break;
                 }
+                case llvm::Instruction::And:
+                case llvm::Instruction::Or:
+                case llvm::Instruction::Xor:
+                    if (!excluded) FV.countBitwise++;
+                    break;
+                
+                case llvm::Instruction::SRem:
+                case llvm::Instruction::URem:
+                    if (!excluded) FV.intModulus++;
+                    break;
+                case llvm::Instruction::FRem:
+                    FV.floatModulus++;
+                    break;
                 case llvm::Instruction::Select:
                     FV.selectStmtCount++;
                     break;

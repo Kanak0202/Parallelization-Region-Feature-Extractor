@@ -25,7 +25,7 @@ void appendRegionToCSV(const std::string &csvPath,
     {
         ofs << "RegionID,FileName,LoopDepth,IterationSpace,BasicBlocks,"
                "IntArithmetic,FloatArithmetic,IntMultiply,FloatMultiply,"
-               "IntDivision,FloatDivision,SpecialFunctions,FMAOperations,"
+               "IntDivision,FloatDivision,BitwiseCount,IntModulus,FloatModulus,SpecialFunctions,FMAOperations,"
                "Loads,Stores,BytesRead,BytesWritten,StrideClass,"
                "IndirectAccesses,ReductionVars,FunctionCalls,ArraysAccessed,BranchCount,SelectCount"
                "SerialTime,OpenMP3Time,"
@@ -38,6 +38,7 @@ void appendRegionToCSV(const std::string &csvPath,
         << f.intArithmetic << "," << f.floatArithmetic << ","
         << f.intMultiply << "," << f.floatMultiply << ","
         << f.intDivision << "," << f.floatDivision << ","
+        << f.countBitwise << "," << f.intModulus << "," << f.floatModulus << ","
         << f.specialFunctions << "," << f.fmaOperations << ","
         << f.loads << "," << f.stores << ","
         << f.bytesRead << "," << f.bytesWritten << ","

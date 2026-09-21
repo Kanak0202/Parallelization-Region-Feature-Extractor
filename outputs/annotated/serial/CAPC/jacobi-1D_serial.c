@@ -24,7 +24,7 @@ static void __capc_report(void){
 /* end CAPC timing support */
 
 
-#define N 49000000
+#define N 1000
 #define T 500
 
 double a[N];

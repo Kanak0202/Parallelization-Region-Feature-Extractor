@@ -20,6 +20,10 @@ struct FeatureVector
     int intDivision = 0;
     int floatDivision = 0;
 
+    int countBitwise = 0;
+    int intModulus = 0;
+    int floatModulus = 0;
+
     int specialFunctions = 0;
     int fmaOperations = 0;
 
