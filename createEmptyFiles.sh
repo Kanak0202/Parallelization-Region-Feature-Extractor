@@ -5,41 +5,10 @@ BASE_DIR="$(pwd)/outputs"
 
 # PolyBench benchmark names
 FILES=(
-    "datamining-correlation"
-    "datamining-covariance"
-
-    "linear-algebra-blas-gemm"
-    "linear-algebra-blas-gemver"
-    "linear-algebra-blas-gesummv"
-    "linear-algebra-blas-symm"
-    "linear-algebra-blas-syr2k"
-    "linear-algebra-blas-syrk"
-    "linear-algebra-blas-trmm"
-
-    "linear-algebra-kernels-2mm"
-    "linear-algebra-kernels-3mm"
-    "linear-algebra-kernels-atax"
-    "linear-algebra-kernels-bicg"
-    "linear-algebra-kernels-doitgen"
-    "linear-algebra-kernels-mvt"
-
-    "linear-algebra-solvers-cholesky"
-    "linear-algebra-solvers-durbin"
-    "linear-algebra-solvers-gramschmidt"
-    "linear-algebra-solvers-lu"
-    "linear-algebra-solvers-ludcmp"
-    "linear-algebra-solvers-trisolv"
-
-    "medley-deriche"
-    "medley-floyd-warshall"
-    "medley-nussinov"
-
-    "stencils-adi"
-    "stencils-fdtd-2d"
-    "stencils-heat-3d"
-    "stencils-jacobi-1d"
-    "stencils-jacobi-2d"
-    "stencils-seidel-2d"
+    "imageFiltering"
+    "matrixTranspose"
+    "particleFilter"
+    "vectorNormalization"
 )
 
 created=0
@@ -47,7 +16,7 @@ skipped=0
 
 # Create OpenACC, OpenMP 3, and OpenMP 4.5 files
 for variant in openacc omp3 omp45; do
-    DIR="$BASE_DIR/$variant/CAPC"
+    DIR="$BASE_DIR/$variant/CAPC2"
 
     mkdir -p "$DIR"
 
@@ -78,7 +47,7 @@ for variant in openacc omp3 omp45; do
 done
 
 # Create serial files
-DIR="$BASE_DIR/serial/CAPC"
+DIR="$BASE_DIR/serial/CAPC2"
 
 mkdir -p "$DIR"
 

@@ -4,47 +4,81 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 target triple = "x86_64-conda-linux-gnu"
 
 ; Function Attrs: nofree norecurse nosync nounwind memory(argmem: readwrite) uwtable
-define dso_local void @capc_region_2(ptr noalias noundef captures(none) %0, ptr noalias noundef readonly captures(none) %1, ptr noalias noundef readonly captures(none) %2) local_unnamed_addr #0 {
-  br label %4
+define dso_local void @capc_region_2(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef readonly captures(none) %1) local_unnamed_addr #0 {
+  br label %3
 
-4:                                                ; preds = %3, %27
-  %5 = phi i64 [ 0, %3 ], [ %28, %27 ]
-  %6 = getelementptr inbounds nuw [10 x double], ptr %0, i64 %5
-  %7 = getelementptr inbounds nuw [10 x double], ptr %1, i64 %5
-  br label %8
+3:                                                ; preds = %2, %60
+  %4 = phi i64 [ 1, %2 ], [ %61, %60 ]
+  %5 = getelementptr inbounds nuw [17 x [17 x float]], ptr %1, i64 %4
+  %6 = getelementptr inbounds nuw i8, ptr %5, i64 1156
+  %7 = getelementptr i8, ptr %5, i64 -1156
+  %8 = getelementptr inbounds nuw [17 x [17 x float]], ptr %0, i64 %4
+  br label %9
 
-8:                                                ; preds = %4, %24
-  %9 = phi i64 [ 0, %4 ], [ %25, %24 ]
-  %10 = getelementptr inbounds nuw double, ptr %6, i64 %9
-  %11 = getelementptr inbounds nuw double, ptr %2, i64 %9
-  %12 = load double, ptr %10, align 8, !tbaa !9
-  br label %13
+9:                                                ; preds = %3, %57
+  %10 = phi i64 [ 1, %3 ], [ %58, %57 ]
+  %11 = getelementptr inbounds nuw [17 x float], ptr %6, i64 %10
+  %12 = getelementptr inbounds nuw [17 x float], ptr %5, i64 %10
+  %13 = getelementptr inbounds nuw [17 x float], ptr %7, i64 %10
+  %14 = getelementptr inbounds nuw i8, ptr %12, i64 68
+  %15 = getelementptr i8, ptr %12, i64 -68
+  %16 = getelementptr inbounds nuw [17 x float], ptr %8, i64 %10
+  br label %17
 
-13:                                               ; preds = %8, %13
-  %14 = phi i64 [ 0, %8 ], [ %22, %13 ]
-  %15 = phi double [ %12, %8 ], [ %21, %13 ]
-  %16 = getelementptr inbounds nuw double, ptr %7, i64 %14
-  %17 = load double, ptr %16, align 8, !tbaa !9
-  %18 = getelementptr inbounds nuw [10 x double], ptr %11, i64 %14
-  %19 = load double, ptr %18, align 8, !tbaa !9
-  %20 = fmul contract double %17, %19
-  %21 = fadd contract double %15, %20
-  %22 = add nuw nsw i64 %14, 1
-  %23 = icmp eq i64 %22, 10
-  br i1 %23, label %24, label %13, !llvm.loop !11
+17:                                               ; preds = %9, %17
+  %18 = phi i64 [ 1, %9 ], [ %42, %17 ]
+  %19 = getelementptr inbounds nuw float, ptr %11, i64 %18
+  %20 = load float, ptr %19, align 4, !tbaa !9
+  %21 = fpext contract float %20 to double
+  %22 = getelementptr inbounds nuw float, ptr %12, i64 %18
+  %23 = load float, ptr %22, align 4, !tbaa !9
+  %24 = fpext contract float %23 to double
+  %25 = fmul contract double %24, 2.000000e+00
+  %26 = fsub contract double %21, %25
+  %27 = getelementptr inbounds nuw float, ptr %13, i64 %18
+  %28 = load float, ptr %27, align 4, !tbaa !9
+  %29 = fpext contract float %28 to double
+  %30 = fadd contract double %26, %29
+  %31 = fmul contract double %30, 1.250000e-01
+  %32 = getelementptr inbounds nuw float, ptr %14, i64 %18
+  %33 = load float, ptr %32, align 4, !tbaa !9
+  %34 = fpext contract float %33 to double
+  %35 = fsub contract double %34, %25
+  %36 = getelementptr inbounds nuw float, ptr %15, i64 %18
+  %37 = load float, ptr %36, align 4, !tbaa !9
+  %38 = fpext contract float %37 to double
+  %39 = fadd contract double %35, %38
+  %40 = fmul contract double %39, 1.250000e-01
+  %41 = fadd contract double %31, %40
+  %42 = add nuw nsw i64 %18, 1
+  %43 = getelementptr inbounds nuw float, ptr %12, i64 %42
+  %44 = load float, ptr %43, align 4, !tbaa !9
+  %45 = fpext contract float %44 to double
+  %46 = fsub contract double %45, %25
+  %47 = getelementptr i8, ptr %22, i64 -4
+  %48 = load float, ptr %47, align 4, !tbaa !9
+  %49 = fpext contract float %48 to double
+  %50 = fadd contract double %46, %49
+  %51 = fmul contract double %50, 1.250000e-01
+  %52 = fadd contract double %41, %51
+  %53 = fadd contract double %52, %24
+  %54 = fptrunc contract double %53 to float
+  %55 = getelementptr inbounds nuw float, ptr %16, i64 %18
+  store float %54, ptr %55, align 4, !tbaa !9
+  %56 = icmp eq i64 %42, 16
+  br i1 %56, label %57, label %17, !llvm.loop !11
 
-24:                                               ; preds = %13
-  store double %21, ptr %10, align 8, !tbaa !9
-  %25 = add nuw nsw i64 %9, 1
-  %26 = icmp eq i64 %25, 10
-  br i1 %26, label %27, label %8, !llvm.loop !14
+57:                                               ; preds = %17
+  %58 = add nuw nsw i64 %10, 1
+  %59 = icmp eq i64 %58, 16
+  br i1 %59, label %60, label %9, !llvm.loop !14
 
-27:                                               ; preds = %24
-  %28 = add nuw nsw i64 %5, 1
-  %29 = icmp eq i64 %28, 10
-  br i1 %29, label %30, label %4, !llvm.loop !15
+60:                                               ; preds = %57
+  %61 = add nuw nsw i64 %4, 1
+  %62 = icmp eq i64 %61, 16
+  br i1 %62, label %63, label %3, !llvm.loop !15
 
-30:                                               ; preds = %27
+63:                                               ; preds = %60
   ret void
 }
 
@@ -64,7 +98,7 @@ attributes #0 = { nofree norecurse nosync nounwind memory(argmem: readwrite) uwt
 !7 = !{!"omnipotent char", !8, i64 0}
 !8 = !{!"Simple C/C++ TBAA"}
 !9 = !{!10, !10, i64 0}
-!10 = !{!"double", !7, i64 0}
+!10 = !{!"float", !7, i64 0}
 !11 = distinct !{!11, !12, !13}
 !12 = !{!"llvm.loop.mustprogress"}
 !13 = !{!"llvm.loop.unroll.disable"}

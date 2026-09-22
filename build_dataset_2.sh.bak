@@ -65,7 +65,7 @@ ulimit -s unlimited
 # Static feature extraction
 # ----------------------------------------------------------------------------
 
-INPUT_DIR="./outputs/serial/CAPC"
+INPUT_DIR="./outputs/serial/CAPC2"
 
 FEATURE_EXTRACTOR="./build/ProfitabilityTool"
 
@@ -74,13 +74,13 @@ FEATURE_EXTRACTOR="./build/ProfitabilityTool"
 # Source directories
 # ----------------------------------------------------------------------------
 
-SERIAL_SOURCE_DIR="./outputs/serial/CAPC"
+SERIAL_SOURCE_DIR="./outputs/serial/CAPC2"
 
-OMP3_SOURCE_DIR="./outputs/omp3/CAPC"
+OMP3_SOURCE_DIR="./outputs/omp3/CAPC2"
 
-OMP45_SOURCE_DIR="./outputs/omp45/CAPC"
+OMP45_SOURCE_DIR="./outputs/omp45/CAPC2"
 
-OPENACC_SOURCE_DIR="./outputs/openacc/CAPC"
+OPENACC_SOURCE_DIR="./outputs/openacc/CAPC2"
 
 
 # ----------------------------------------------------------------------------
@@ -89,9 +89,9 @@ OPENACC_SOURCE_DIR="./outputs/openacc/CAPC"
 
 ANNOTATED_ROOT="./outputs/annotated"
 
-SERIAL_ANNOTATED_DIR="$ANNOTATED_ROOT/serial/CAPC"
+SERIAL_ANNOTATED_DIR="$ANNOTATED_ROOT/serial/CAPC2"
 
-OMP3_ANNOTATED_DIR="$ANNOTATED_ROOT/omp3/CAPC"
+OMP3_ANNOTATED_DIR="$ANNOTATED_ROOT/omp3/CAPC2"
 
 
 # ----------------------------------------------------------------------------
@@ -2120,7 +2120,7 @@ run_cpu()
         save_small_log \
             "$ERROR_LOG" \
             "$EXEC_ERROR_DIR/"\
-"${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}_timeout.log"
+    "${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}_timeout.log"
 
         rm -f "$RUN_LOG"
         rm -f "$ERROR_LOG"
@@ -2136,7 +2136,7 @@ run_cpu()
         save_small_log \
             "$ERROR_LOG" \
             "$EXEC_ERROR_DIR/"\
-"${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}.log"
+    "${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}.log"
 
         rm -f "$RUN_LOG"
         rm -f "$ERROR_LOG"
@@ -2352,7 +2352,7 @@ run_gpu()
         save_small_log \
             "$ERROR_LOG" \
             "$EXEC_ERROR_DIR/"\
-"${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}_timeout.log"
+    "${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}_timeout.log"
 
         rm -f "$RUN_LOG"
         rm -f "$ERROR_LOG"
@@ -2367,7 +2367,7 @@ run_gpu()
         save_small_log \
             "$ERROR_LOG" \
             "$EXEC_ERROR_DIR/"\
-"${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}.log"
+    "${BENCHMARK}_${TOOL}_${PARAMETER}_${VALUE}.log"
 
         rm -f "$RUN_LOG"
         rm -f "$ERROR_LOG"

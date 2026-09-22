@@ -8,11 +8,10 @@
 /* ============================================================
  * Original source support code (original main removed)
  * ============================================================ */
-//3 Matrix Multiplications (E=A.B; F=C.D; G=E.F)
 
-#include<stdio.h>
+#include <stdio.h>
 
-#define N 14
+#define N 1
 
 int main(void)
 {
@@ -24,24 +23,16 @@ int main(void)
 
     /* Target Region 2; original function: main() */
     /* === Host-only input/setup replay (NOT timed) === */
-    int i,j,k;
-    	double a[N][N],b[N][N],c[N][N],d[N][N],e[N][N],f[N][N],result[N][N];
+    static int a[N], b[N], normalized[N], category[N];
+        int i;
     
-    	//Array Initialization
+        // Initialize arrays
     /* Earlier CAPC producer/initializer replayed on host. */
-    	for(i=0;i<N;i++)
-    	{
-    		for(j=0;j<N;j++)
-    		{
-    			a[i][j]=(double)(0.1*i+j);	
-    			b[i][j]=(double)(0.2*j+i);
-    			c[i][j]=(double)(0.3*i+j);
-    			d[i][j]=(double)(0.4*j+i);
-    			e[i][j]=(double)(0.5*i+j);
-    			f[i][j]=(double)(0.6*j+i);
-    			result[i][j]=0.0;
-    		}
-    	}
+        for (i = 0; i < N; i++)
+        {
+            a[i] = (i * 17 + 13) % 1000;
+            b[i] = (i * 23 + 7) % 1000;
+        }
 
     /* === GPU/OpenACC Runtime Initialization === */
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
@@ -50,12 +41,12 @@ int main(void)
     __capc_t_init = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
 
     /* === Device allocation only (no data movement) === */
-    #pragma acc enter data create(a[0:N][0:N], b[0:N][0:N], result[0:N][0:N])
+    #pragma acc enter data create(a[0:N], b[0:N], normalized[0:N])
     #pragma acc wait
 
     /* === Required Transfer In (Host -> Device) === */
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
-    #pragma acc update device(a[0:N][0:N], b[0:N][0:N], result[0:N][0:N])
+    #pragma acc update device(a[0:N], b[0:N])
     #pragma acc wait
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
     __capc_t_in = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
@@ -64,11 +55,18 @@ int main(void)
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
 
     #pragma capc profitability_region begin
-    #pragma acc parallel loop collapse(2) present(a[0:N][0:N], b[0:N][0:N], result[0:N][0:N])
-    	for (i = 0; i < N; i++)
-    		for (j = 0; j < N; j++)
-    			for (k = 0; k < N; k++)
-    				result[i][j]= result[i][j]+a[i][k]*b[k][j];
+    #pragma acc parallel loop present(a[0:N], b[0:N], normalized[0:N])
+        for (i = 0; i < N; i++)
+        {
+            int value = a[i] + b[i];
+    
+            if (value > 1200)
+                normalized[i] = value / 4;
+            else if (value > 600)
+                normalized[i] = value / 3;
+            else
+                normalized[i] = value / 2;
+        }
     #pragma capc profitability_region end
 
     #pragma acc wait
@@ -77,7 +75,7 @@ int main(void)
 
     /* === Required Transfer Out (Device -> Host) === */
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_start);
-    #pragma acc update self(result[0:N][0:N])
+    #pragma acc update self(normalized[0:N])
     #pragma acc wait
     clock_gettime(CLOCK_MONOTONIC, &__capc_t_end);
     __capc_t_out = (__capc_t_end.tv_sec - __capc_t_start.tv_sec) + (__capc_t_end.tv_nsec - __capc_t_start.tv_nsec) / 1e9;
@@ -90,7 +88,7 @@ int main(void)
     printf("  - Transfer Out (D2H): %f seconds\n", __capc_t_out);
     printf("  - Isolated Region Time: %f seconds\n", __capc_t_total);
 
-    #pragma acc exit data delete(a[0:N][0:N], b[0:N][0:N], result[0:N][0:N])
+    #pragma acc exit data delete(a[0:N], b[0:N], normalized[0:N])
     #pragma acc wait
 
     /* Runtime shutdown is cleanup and is intentionally not part of isolated time. */

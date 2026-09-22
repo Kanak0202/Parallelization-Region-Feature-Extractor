@@ -1,11 +1,8 @@
 #include<stdio.h>
-#define N 10
+#define N 600000000
 
-void capc_region_3(double (* restrict result)[10], double (* restrict e)[10], double (* restrict f)[10])
+void capc_region_3()
 {
-    int i;
-    int j;
-    int k;
 	for (i = 0; i < N; i++)
 		for (j = 0; j < N; j++)
 			for (k = 0; k < N; k++)

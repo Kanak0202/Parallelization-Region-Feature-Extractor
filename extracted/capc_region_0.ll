@@ -4,62 +4,49 @@ target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:
 target triple = "x86_64-conda-linux-gnu"
 
 ; Function Attrs: nofree norecurse nosync nounwind memory(argmem: write) uwtable
-define dso_local void @capc_region_0(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef writeonly captures(none) %1, ptr noalias noundef writeonly captures(none) %2, ptr noalias noundef writeonly captures(none) %3, ptr noalias noundef writeonly captures(none) %4, ptr noalias noundef writeonly captures(none) %5, ptr noalias noundef writeonly captures(none) %6) local_unnamed_addr #0 {
+define dso_local void @capc_region_0(ptr noalias noundef writeonly captures(none) %0, ptr noalias noundef writeonly captures(none) %1) local_unnamed_addr #0 {
+  br label %3
+
+3:                                                ; preds = %2, %27
+  %4 = phi i64 [ 0, %2 ], [ %28, %27 ]
+  %5 = add nuw nsw i64 %4, 17
+  %6 = getelementptr inbounds nuw [17 x [17 x float]], ptr %1, i64 %4
+  %7 = getelementptr inbounds nuw [17 x [17 x float]], ptr %0, i64 %4
   br label %8
 
-8:                                                ; preds = %7, %44
-  %9 = phi i64 [ 0, %7 ], [ %45, %44 ]
-  %10 = trunc nuw nsw i64 %9 to i32
-  %11 = uitofp nneg i32 %10 to double
-  %12 = fmul contract double %11, 1.000000e-01
-  %13 = getelementptr inbounds nuw [10 x double], ptr %0, i64 %9
-  %14 = getelementptr inbounds nuw [10 x double], ptr %1, i64 %9
-  %15 = fmul contract double %11, 3.000000e-01
-  %16 = getelementptr inbounds nuw [10 x double], ptr %2, i64 %9
-  %17 = getelementptr inbounds nuw [10 x double], ptr %3, i64 %9
-  %18 = fmul contract double %11, 5.000000e-01
-  %19 = getelementptr inbounds nuw [10 x double], ptr %4, i64 %9
-  %20 = getelementptr inbounds nuw [10 x double], ptr %5, i64 %9
-  %21 = getelementptr inbounds nuw [10 x double], ptr %6, i64 %9
-  br label %22
+8:                                                ; preds = %3, %24
+  %9 = phi i64 [ 0, %3 ], [ %25, %24 ]
+  %10 = add nuw nsw i64 %5, %9
+  %11 = getelementptr inbounds nuw [17 x float], ptr %6, i64 %9
+  %12 = getelementptr inbounds nuw [17 x float], ptr %7, i64 %9
+  br label %13
 
-22:                                               ; preds = %8, %22
-  %23 = phi i64 [ 0, %8 ], [ %42, %22 ]
-  %24 = trunc nuw nsw i64 %23 to i32
-  %25 = uitofp nneg i32 %24 to double
-  %26 = fadd contract double %12, %25
-  %27 = getelementptr inbounds nuw double, ptr %13, i64 %23
-  store double %26, ptr %27, align 8, !tbaa !9
-  %28 = fmul contract double %25, 2.000000e-01
-  %29 = fadd contract double %28, %11
-  %30 = getelementptr inbounds nuw double, ptr %14, i64 %23
-  store double %29, ptr %30, align 8, !tbaa !9
-  %31 = fadd contract double %15, %25
-  %32 = getelementptr inbounds nuw double, ptr %16, i64 %23
-  store double %31, ptr %32, align 8, !tbaa !9
-  %33 = fmul contract double %25, 4.000000e-01
-  %34 = fadd contract double %33, %11
-  %35 = getelementptr inbounds nuw double, ptr %17, i64 %23
-  store double %34, ptr %35, align 8, !tbaa !9
-  %36 = fadd contract double %18, %25
-  %37 = getelementptr inbounds nuw double, ptr %19, i64 %23
-  store double %36, ptr %37, align 8, !tbaa !9
-  %38 = fmul contract double %25, 6.000000e-01
-  %39 = fadd contract double %38, %11
-  %40 = getelementptr inbounds nuw double, ptr %20, i64 %23
-  store double %39, ptr %40, align 8, !tbaa !9
-  %41 = getelementptr inbounds nuw double, ptr %21, i64 %23
-  store double 0.000000e+00, ptr %41, align 8, !tbaa !9
-  %42 = add nuw nsw i64 %23, 1
-  %43 = icmp eq i64 %42, 10
-  br i1 %43, label %44, label %22, !llvm.loop !11
+13:                                               ; preds = %8, %13
+  %14 = phi i64 [ 0, %8 ], [ %22, %13 ]
+  %15 = sub nuw nsw i64 %10, %14
+  %16 = trunc nuw nsw i64 %15 to i32
+  %17 = sitofp i32 %16 to float
+  %18 = fmul contract float %17, 1.000000e+01
+  %19 = fdiv contract float %18, 1.700000e+01
+  %20 = getelementptr inbounds nuw float, ptr %11, i64 %14
+  store float %19, ptr %20, align 4, !tbaa !9
+  %21 = getelementptr inbounds nuw float, ptr %12, i64 %14
+  store float %19, ptr %21, align 4, !tbaa !9
+  %22 = add nuw nsw i64 %14, 1
+  %23 = icmp eq i64 %22, 17
+  br i1 %23, label %24, label %13, !llvm.loop !11
 
-44:                                               ; preds = %22
-  %45 = add nuw nsw i64 %9, 1
-  %46 = icmp eq i64 %45, 10
-  br i1 %46, label %47, label %8, !llvm.loop !14
+24:                                               ; preds = %13
+  %25 = add nuw nsw i64 %9, 1
+  %26 = icmp eq i64 %25, 17
+  br i1 %26, label %27, label %8, !llvm.loop !14
 
-47:                                               ; preds = %44
+27:                                               ; preds = %24
+  %28 = add nuw nsw i64 %4, 1
+  %29 = icmp eq i64 %28, 17
+  br i1 %29, label %30, label %3, !llvm.loop !15
+
+30:                                               ; preds = %27
   ret void
 }
 
@@ -79,8 +66,9 @@ attributes #0 = { nofree norecurse nosync nounwind memory(argmem: write) uwtable
 !7 = !{!"omnipotent char", !8, i64 0}
 !8 = !{!"Simple C/C++ TBAA"}
 !9 = !{!10, !10, i64 0}
-!10 = !{!"double", !7, i64 0}
+!10 = !{!"float", !7, i64 0}
 !11 = distinct !{!11, !12, !13}
 !12 = !{!"llvm.loop.mustprogress"}
 !13 = !{!"llvm.loop.unroll.disable"}
 !14 = distinct !{!14, !12, !13}
+!15 = distinct !{!15, !12, !13}

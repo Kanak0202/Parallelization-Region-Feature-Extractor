@@ -27,7 +27,7 @@ void appendRegionToCSV(const std::string &csvPath,
                "IntArithmetic,FloatArithmetic,IntMultiply,FloatMultiply,"
                "IntDivision,FloatDivision,BitwiseCount,IntModulus,FloatModulus,SpecialFunctions,FMAOperations,"
                "Loads,Stores,BytesRead,BytesWritten,StrideClass,"
-               "IndirectAccesses,ReductionVars,FunctionCalls,ArraysAccessed,BranchCount,SelectCount"
+               "IndirectAccesses,ReductionVars,FunctionCalls,ArraysAccessed,BranchCount,SelectCount,"
                "SerialTime,OpenMP3Time,"
                "OpenMP45ResidentTime,OpenMP45ObservedTime,OpenMP45IsolatedTime,"
                "OpenACCResidentTime,OpenACCObservedTime,OpenACCIsolatedTime\n";
