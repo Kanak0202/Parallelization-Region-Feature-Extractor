@@ -65,7 +65,7 @@ ulimit -s unlimited
 # Static feature extraction
 # ----------------------------------------------------------------------------
 
-INPUT_DIR="./outputs/serial/CAPC"
+INPUT_DIR="./outputs/serial/CAPC4"
 
 FEATURE_EXTRACTOR="./build/ProfitabilityTool"
 
@@ -74,13 +74,13 @@ FEATURE_EXTRACTOR="./build/ProfitabilityTool"
 # Source directories
 # ----------------------------------------------------------------------------
 
-SERIAL_SOURCE_DIR="./outputs/serial/CAPC"
+SERIAL_SOURCE_DIR="./outputs/serial/CAPC4"
 
-OMP3_SOURCE_DIR="./outputs/omp3/CAPC"
+OMP3_SOURCE_DIR="./outputs/omp3/CAPC4"
 
-OMP45_SOURCE_DIR="./outputs/omp45/CAPC"
+OMP45_SOURCE_DIR="./outputs/omp45/CAPC4"
 
-OPENACC_SOURCE_DIR="./outputs/openacc/CAPC"
+OPENACC_SOURCE_DIR="./outputs/openacc/CAPC4"
 
 
 # ----------------------------------------------------------------------------
@@ -89,9 +89,9 @@ OPENACC_SOURCE_DIR="./outputs/openacc/CAPC"
 
 ANNOTATED_ROOT="./outputs/annotated"
 
-SERIAL_ANNOTATED_DIR="$ANNOTATED_ROOT/serial/CAPC"
+SERIAL_ANNOTATED_DIR="$ANNOTATED_ROOT/serial/CAPC4"
 
-OMP3_ANNOTATED_DIR="$ANNOTATED_ROOT/omp3/CAPC"
+OMP3_ANNOTATED_DIR="$ANNOTATED_ROOT/omp3/CAPC4"
 
 
 # ----------------------------------------------------------------------------
@@ -3250,6 +3250,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Apply --features-csv regardless of which phase we're starting from.
+if [[ -n "$FEATURES_CSV_OVERRIDE" ]]; then
+    FEATURES_CSV="$FEATURES_CSV_OVERRIDE"
+fi
+
 # ============================================================================
 # REFRESH STATIC FEATURES IN AN EXISTING CSV
 #
@@ -3524,8 +3529,6 @@ if [[ "$START_PHASE" -ge 2 ]]; then
         echo
         exit 1
     fi
-
-    FEATURES_CSV="$FEATURES_CSV_OVERRIDE"
 
     echo
     echo "Using existing feature CSV:"

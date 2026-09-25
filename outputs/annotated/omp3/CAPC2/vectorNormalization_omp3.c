@@ -92,8 +92,8 @@ int main()
     __capc_rc[3]++;
     #pragma capc profitability_region end
 
-    printf("Normalized[0] = %d\n", normalized[0]);
-    printf("Category[0] = %d\n", category[0]);
+    printf("Normalized[%d] = %d\n", N, normalized[N]);
+    printf("Category[%d] = %d\n", N, category[N]);
 
     return 0;
 }

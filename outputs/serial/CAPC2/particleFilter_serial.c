@@ -70,8 +70,8 @@ int main()
     }
     #pragma capc profitability_region end
 
-    printf("Distance[0] = %d\n", distance[0]);
-    printf("Category[0] = %d\n", category[0]);
+    printf("Distance[%d] = %d\n", N, distance[N]);
+    printf("Category[%d] = %d\n", N, category[N]);
 
     return 0;
 }

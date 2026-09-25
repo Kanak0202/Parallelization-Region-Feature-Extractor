@@ -103,7 +103,7 @@ int main()
     __capc_rc[3]++;
     #pragma capc profitability_region end
 
-    printf("D[0][0] = %d\n", D[0][0]);
+    printf("D[%d][%d] = %d\n", N, N, D[N][N]);
 
     return 0;
 }

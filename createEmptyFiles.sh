@@ -1,14 +1,19 @@
-```bash
 #!/bin/bash
 
 BASE_DIR="$(pwd)/outputs"
 
-# PolyBench benchmark names
+# benchmark names
 FILES=(
-    "imageFiltering"
-    "matrixTranspose"
-    "particleFilter"
-    "vectorNormalization"
+    "integerDivisionBitwise"
+    "floatingDivisionSelect"
+    "fmaCompute"
+    "integerBitManipulation"
+    "stencil1D"
+    "stridedAccess"
+    "indirectAccess"
+    "functionCallCompute"
+    "convolution2D"
+    "matrixReduction"
 )
 
 created=0
@@ -16,7 +21,7 @@ skipped=0
 
 # Create OpenACC, OpenMP 3, and OpenMP 4.5 files
 for variant in openacc omp3 omp45; do
-    DIR="$BASE_DIR/$variant/CAPC2"
+    DIR="$BASE_DIR/$variant/CAPC4"
 
     mkdir -p "$DIR"
 
@@ -33,7 +38,7 @@ for variant in openacc omp3 omp45; do
     esac
 
     for file in "${FILES[@]}"; do
-        output_file="$DIR/polybench-${file}${suffix}"
+        output_file="$DIR/${file}${suffix}"
 
         if [[ -e "$output_file" ]]; then
             echo "Skipping existing: $output_file"
@@ -47,12 +52,12 @@ for variant in openacc omp3 omp45; do
 done
 
 # Create serial files
-DIR="$BASE_DIR/serial/CAPC2"
+DIR="$BASE_DIR/serial/CAPC4"
 
 mkdir -p "$DIR"
 
 for file in "${FILES[@]}"; do
-    output_file="$DIR/polybench-${file}_serial.c"
+    output_file="$DIR/${file}_serial.c"
 
     if [[ -e "$output_file" ]]; then
         echo "Skipping existing: $output_file"
@@ -71,4 +76,3 @@ echo "Created : $created files"
 echo "Skipped : $skipped existing files"
 echo "Total   : $((created + skipped)) files"
 echo "========================================"
-```

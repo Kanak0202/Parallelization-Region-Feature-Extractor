@@ -116,7 +116,7 @@ int main()
     __capc_rc[3]++;
     #pragma capc profitability_region end
 
-    printf("Output[100][100] = %d\n", output[100][100]);
+    printf("Output[%d][%d] = %d\n", N, N, output[N][N]);
 
     return 0;
 }
